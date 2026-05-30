@@ -18,7 +18,9 @@ const policy: GroundingPolicy = {
   applies_to_tasks: ["chat"],
 };
 
-function metrics(p: Partial<GroundingAttemptMetrics> = {}): GroundingAttemptMetrics {
+function metrics(
+  p: Partial<GroundingAttemptMetrics> = {},
+): GroundingAttemptMetrics {
   return {
     strip_rate: 0,
     claims_total: 5,
@@ -50,14 +52,24 @@ Deno.test("well-grounded answer passes", () => {
 });
 
 Deno.test("missing citations => retry while attempts remain", () => {
-  const d = evaluateGroundingGate(metrics({ citations_found: 0 }), policy, 1, 3);
+  const d = evaluateGroundingGate(
+    metrics({ citations_found: 0 }),
+    policy,
+    1,
+    3,
+  );
   assertEquals(d.ok, false);
   assertEquals(d.reason_code, "no_citations");
   assertEquals(d.should_retry, true);
 });
 
 Deno.test("missing citations on final attempt => refuse", () => {
-  const d = evaluateGroundingGate(metrics({ citations_found: 0 }), policy, 3, 3);
+  const d = evaluateGroundingGate(
+    metrics({ citations_found: 0 }),
+    policy,
+    3,
+    3,
+  );
   assertEquals(d.ok, false);
   assertEquals(d.should_retry, false);
 });

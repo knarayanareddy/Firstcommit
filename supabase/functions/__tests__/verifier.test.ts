@@ -22,7 +22,8 @@ function span(p: Partial<EvidenceSpan> = {}): EvidenceSpan {
 }
 
 Deno.test("claim with a valid in-range citation is kept", async () => {
-  const text = "- authenticate verifies the jwt token [SOURCE: src/auth.ts:1-5]";
+  const text =
+    "- authenticate verifies the jwt token [SOURCE: src/auth.ts:1-5]";
   const r = await verifyClaims(text, [span()]);
   assert(r.verifiedText.includes("authenticate"), "kept claim text");
   assertEquals(r.claims_stripped, 0);

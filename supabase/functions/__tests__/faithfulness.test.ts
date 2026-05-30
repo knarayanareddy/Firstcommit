@@ -5,17 +5,22 @@ import {
 import {
   aggregate,
   checkFaithfulness,
+  type FaithfulnessResult,
   heuristicEntailment,
   tokenize,
-  type FaithfulnessResult,
 } from "../ai-task-router/faithfulness.ts";
 
 Deno.test("tokenize drops stopwords and short tokens", () => {
-  assertEquals(tokenize("The login is in authService.ts"), ["login", "authservice"]);
+  assertEquals(tokenize("The login is in authService.ts"), [
+    "login",
+    "authservice",
+  ]);
 });
 
 Deno.test("heuristicEntailment: supported claim scores high", () => {
-  const ev = ["export function authenticate(token) { return verifyJwt(token); }"];
+  const ev = [
+    "export function authenticate(token) { return verifyJwt(token); }",
+  ];
   const s = heuristicEntailment("authenticate verifies the jwt token", ev);
   assert(s >= 0.5, `score ${s}`);
 });
@@ -55,7 +60,9 @@ Deno.test("checkFaithfulness: forced heuristic flags unsupported claim", async (
     [
       {
         claim: "authenticate verifies the jwt token",
-        evidenceTexts: ["function authenticate(token){ return verifyJwt(token); }"],
+        evidenceTexts: [
+          "function authenticate(token){ return verifyJwt(token); }",
+        ],
       },
       {
         claim: "the scheduler purges stale ingestion jobs nightly",

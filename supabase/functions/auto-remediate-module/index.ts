@@ -121,7 +121,8 @@ Deno.serve(async (req) => {
     const llmApiKey = openAIApiKey || localApiKey;
     const llmEndpoint = useOpenAI
       ? "https://api.openai.com/v1/chat/completions"
-      : ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions");
+      : ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+        "/chat/completions");
     const llmModel = useOpenAI ? "gpt-4o" : "google/gemini-3-flash-preview";
 
     if (!llmApiKey) {

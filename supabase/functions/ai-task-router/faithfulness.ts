@@ -51,8 +51,29 @@ export function faithfulnessThreshold(): number {
 // ─── Pure helpers (unit-tested) ───────────────────────────────────────────────
 
 const STOP = new Set([
-  "the", "a", "an", "is", "are", "was", "were", "to", "of", "and", "or", "in",
-  "on", "for", "with", "that", "this", "it", "as", "by", "be", "at", "from",
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "to",
+  "of",
+  "and",
+  "or",
+  "in",
+  "on",
+  "for",
+  "with",
+  "that",
+  "this",
+  "it",
+  "as",
+  "by",
+  "be",
+  "at",
+  "from",
 ]);
 
 export function tokenize(s: string): string[] {
@@ -66,7 +87,10 @@ export function tokenize(s: string): string[] {
  * that appear in the evidence. Not a substitute for real NLI, but a safe default and
  * a fast pre-filter. Returns 0..1.
  */
-export function heuristicEntailment(claim: string, evidenceTexts: string[]): number {
+export function heuristicEntailment(
+  claim: string,
+  evidenceTexts: string[],
+): number {
   const claimTokens = tokenize(claim);
   if (claimTokens.length === 0) return 1; // nothing technical to support
   const evidence = new Set(tokenize(evidenceTexts.join("\n")));
@@ -82,9 +106,17 @@ export function heuristicEntailment(claim: string, evidenceTexts: string[]): num
 export function aggregate(
   results: FaithfulnessResult[],
   threshold: number,
-): { faithfulness_score: number; entailment_failures: number; unsupported_claims: string[] } {
+): {
+  faithfulness_score: number;
+  entailment_failures: number;
+  unsupported_claims: string[];
+} {
   if (results.length === 0) {
-    return { faithfulness_score: 1, entailment_failures: 0, unsupported_claims: [] };
+    return {
+      faithfulness_score: 1,
+      entailment_failures: 0,
+      unsupported_claims: [],
+    };
   }
   const unsupported = results.filter((r) => !r.supported).map((r) => r.claim);
   const mean = results.reduce((a, r) => a + r.score, 0) / results.length;
@@ -108,14 +140,17 @@ async function nliEntailment(claim: string, evidence: string): Promise<number> {
     }, {
       allowHttp: false,
       allowAnyHost: false,
-      allowedHostSuffixes: (Deno.env.get("NLI_HOST_SUFFIX") || "").split(",").filter(Boolean),
+      allowedHostSuffixes: (Deno.env.get("NLI_HOST_SUFFIX") || "").split(",")
+        .filter(Boolean),
       allowPrivateHosts: [Deno.env.get("LOCAL_LLM_HOST") || "ollama"],
     });
     if (!res.ok) return heuristicEntailment(claim, [evidence]);
     const data = await res.json();
     // Expect { entailment: 0..1 } or { label, score }
     if (typeof data.entailment === "number") return data.entailment;
-    if (data.label === "entailment" && typeof data.score === "number") return data.score;
+    if (data.label === "entailment" && typeof data.score === "number") {
+      return data.score;
+    }
     return heuristicEntailment(claim, [evidence]);
   } catch (_e) {
     return heuristicEntailment(claim, [evidence]);
@@ -124,8 +159,10 @@ async function nliEntailment(claim: string, evidence: string): Promise<number> {
 
 async function llmJudge(claim: string, evidence: string): Promise<number> {
   const base = Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1";
-  const model = Deno.env.get("DEFAULT_LLM_MODEL") || Deno.env.get("OLLAMA_MODEL") || "llama3";
-  const apiKey = Deno.env.get("LOCAL_LLM_API_KEY") || Deno.env.get("OLLAMA_API_KEY") || "ollama";
+  const model = Deno.env.get("DEFAULT_LLM_MODEL") ||
+    Deno.env.get("OLLAMA_MODEL") || "llama3";
+  const apiKey = Deno.env.get("LOCAL_LLM_API_KEY") ||
+    Deno.env.get("OLLAMA_API_KEY") || "ollama";
   const prompt =
     `Evidence:\n"""${evidence.slice(0, 4000)}"""\n\nClaim: "${claim}"\n\n` +
     `Does the evidence SUPPORT the claim? Reply with strict JSON: ` +
@@ -133,22 +170,33 @@ async function llmJudge(claim: string, evidence: string): Promise<number> {
   try {
     const res = await safeFetch(base + "/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
         model,
         messages: [
-          { role: "system", content: "You are a strict factual entailment judge." },
+          {
+            role: "system",
+            content: "You are a strict factual entailment judge.",
+          },
           { role: "user", content: prompt },
         ],
         response_format: { type: "json_object" },
         temperature: 0,
       }),
-    }, { allowHttp: true, allowPrivateHosts: [Deno.env.get("LOCAL_LLM_HOST") || "ollama"] });
+    }, {
+      allowHttp: true,
+      allowPrivateHosts: [Deno.env.get("LOCAL_LLM_HOST") || "ollama"],
+    });
     if (!res.ok) return heuristicEntailment(claim, [evidence]);
     const data = await res.json();
     const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
     if (typeof parsed.confidence === "number") {
-      return parsed.supported === false ? Math.min(parsed.confidence, 0.49) : parsed.confidence;
+      return parsed.supported === false
+        ? Math.min(parsed.confidence, 0.49)
+        : parsed.confidence;
     }
     return heuristicEntailment(claim, [evidence]);
   } catch (_e) {
@@ -172,20 +220,31 @@ export async function checkFaithfulness(
   opts: { engine?: string; threshold?: number; force?: boolean } = {},
 ): Promise<FaithfulnessReport> {
   const enabled = opts.force ?? isFaithfulnessEnabled();
-  const engine = (opts.engine || Deno.env.get("FAITHFULNESS_ENGINE") || "heuristic").toLowerCase();
+  const engine =
+    (opts.engine || Deno.env.get("FAITHFULNESS_ENGINE") || "heuristic")
+      .toLowerCase();
   const threshold = opts.threshold ?? faithfulnessThreshold();
 
   if (!enabled) {
     return {
-      enabled: false, engine, threshold, results: [],
-      faithfulness_score: 1, entailment_failures: 0, unsupported_claims: [],
+      enabled: false,
+      engine,
+      threshold,
+      results: [],
+      faithfulness_score: 1,
+      entailment_failures: 0,
+      unsupported_claims: [],
     };
   }
 
   const results: FaithfulnessResult[] = [];
   for (const c of claims) {
     const score = await scoreClaim(c, engine);
-    results.push({ claim: c.claim, supported: score >= threshold, score: Number(score.toFixed(4)) });
+    results.push({
+      claim: c.claim,
+      supported: score >= threshold,
+      score: Number(score.toFixed(4)),
+    });
   }
   const agg = aggregate(results, threshold);
   return { enabled: true, engine, threshold, results, ...agg };

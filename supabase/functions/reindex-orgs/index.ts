@@ -3,7 +3,10 @@ import { getSourceCredential } from "../_shared/credentials.ts";
 import { assessChunkRedaction } from "../_shared/secret-patterns.ts";
 import { parseAndValidateExternalUrl } from "../_shared/external-url-policy.ts";
 import { computeContentHash } from "../_shared/hash-utils.ts";
-import { generateEmbedding, getPreviousGenerationEmbeddings } from "../_shared/embedding-reuse.ts";
+import {
+  generateEmbedding,
+  getPreviousGenerationEmbeddings,
+} from "../_shared/embedding-reuse.ts";
 import { createTrace, shouldTrace } from "../_shared/telemetry.ts";
 
 import {

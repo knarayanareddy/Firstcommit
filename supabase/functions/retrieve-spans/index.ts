@@ -17,7 +17,8 @@ async function generateEmbeddingOpenAI(
   if (!apiKey) return null;
   try {
     const url = useLocalEndpoint
-      ? ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/embeddings")
+      ? ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+        "/embeddings")
       : "https://api.openai.com/v1/embeddings";
     const res = await fetch(url, {
       method: "POST",
@@ -76,11 +77,16 @@ async function generateEmbedding(
 ): Promise<number[] | null> {
   // EMBEDDING_PROVIDER selects the embedding backend. It MUST match the provider used
   // to embed the stored chunks (same model + vector dimension) or hybrid search breaks.
-  const provider = (Deno.env.get("EMBEDDING_PROVIDER") || "openai").toLowerCase();
-  const forceLocal = provider === "local" || provider === "ollama" || provider === "llamacpp";
+  const provider = (Deno.env.get("EMBEDDING_PROVIDER") || "openai")
+    .toLowerCase();
+  const forceLocal = provider === "local" || provider === "ollama" ||
+    provider === "llamacpp";
   const openAIApiKey = forceLocal ? "" : (Deno.env.get("OPENAI_API_KEY") || "");
-  const localApiKey = Deno.env.get("LOCAL_LLM_API_KEY") || (forceLocal ? "ollama" : "");
-  const googleApiKey = forceLocal ? "" : (Deno.env.get("GOOGLE_AI_API_KEY") || "");
+  const localApiKey = Deno.env.get("LOCAL_LLM_API_KEY") ||
+    (forceLocal ? "ollama" : "");
+  const googleApiKey = forceLocal
+    ? ""
+    : (Deno.env.get("GOOGLE_AI_API_KEY") || "");
 
   // Local-first when forced (keeps query embeddings consistent with locally-embedded chunks)
   if (forceLocal && localApiKey) {
@@ -352,7 +358,8 @@ Deno.serve(async (req) => {
       top1_score: top1Score,
       avg_score: avgScore,
       unique_files_count: uniqueFiles,
-      embedding_model: Deno.env.get("EMBEDDING_MODEL") || "text-embedding-3-small",
+      embedding_model: Deno.env.get("EMBEDDING_MODEL") ||
+        "text-embedding-3-small",
     });
 
     await trace.flush();

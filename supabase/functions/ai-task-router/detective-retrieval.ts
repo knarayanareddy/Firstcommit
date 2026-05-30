@@ -44,7 +44,9 @@ const KG_SKIP_RERANK_MIN_REFERENCE_HITS = Number(
 // scripts/enable-age-graph.sql). Same signatures + return shape => interaction
 // schema preserved; this only changes which SQL function backs the traversal.
 const KG_ENGINE = (Deno.env.get("KG_ENGINE") || "native").toLowerCase();
-const kgFn = (name: string): string => (KG_ENGINE === "age" ? `${name}_age` : name);
+const kgFn = (
+  name: string,
+): string => (KG_ENGINE === "age" ? `${name}_age` : name);
 
 /**
  * Orchestrates the Multi-Hop Detective Retrieval Loop.

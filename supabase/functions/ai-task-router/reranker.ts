@@ -21,7 +21,8 @@ export async function batchRerankWithLLM(
     Deno.env.get("GOOGLE_AI_API_KEY");
   const endpoint = isGoogleDirect
     ? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-    : ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions");
+    : ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+      "/chat/completions");
 
   if (!apiKey) {
     console.warn("[RERANKER] No API key found for reranking, skipping...");

@@ -64,7 +64,8 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
 
   const useLocalEndpoint = !openAIKey && !!localKey;
   const url = useLocalEndpoint
-    ? ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/embeddings")
+    ? ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+      "/embeddings")
     : "https://api.openai.com/v1/embeddings";
 
   try {

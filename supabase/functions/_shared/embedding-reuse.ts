@@ -134,10 +134,13 @@ export async function generateEmbedding(
   text: string,
   _apiKey?: string,
 ): Promise<number[] | null> {
-  const provider = (Deno.env.get("EMBEDDING_PROVIDER") || "openai").toLowerCase();
-  const forceLocal = provider === "local" || provider === "ollama" || provider === "llamacpp";
+  const provider = (Deno.env.get("EMBEDDING_PROVIDER") || "openai")
+    .toLowerCase();
+  const forceLocal = provider === "local" || provider === "ollama" ||
+    provider === "llamacpp";
   const openAIKey = forceLocal ? undefined : Deno.env.get("OPENAI_API_KEY");
-  const localKey = Deno.env.get("LOCAL_LLM_API_KEY") || (forceLocal ? "ollama" : undefined);
+  const localKey = Deno.env.get("LOCAL_LLM_API_KEY") ||
+    (forceLocal ? "ollama" : undefined);
 
   if (!openAIKey && !localKey) {
     console.error(
@@ -170,7 +173,8 @@ export async function generateEmbedding(
   // local LLM endpoint (primary if no OpenAI key, or fallback on quota error)
   try {
     return await callEmbeddingApi(
-      ((Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/embeddings"),
+      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+        "/embeddings",
       localKey!,
       text,
     );

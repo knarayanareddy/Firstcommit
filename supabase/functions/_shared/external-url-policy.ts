@@ -69,7 +69,9 @@ function localAllowlist(policy: URLPolicy): Set<string> {
   const llmHost = Deno.env.get("LOCAL_LLM_HOST");
   if (llmHost) hosts.add(llmHost.toLowerCase());
   if (Deno.env.get("ALLOW_PRIVATE_OLLAMA") === "true") {
-    for (const h of ["localhost", "host.docker.internal", "ollama", "127.0.0.1"]) {
+    for (
+      const h of ["localhost", "host.docker.internal", "ollama", "127.0.0.1"]
+    ) {
       hosts.add(h);
     }
   }
@@ -192,11 +194,15 @@ export function parseAndValidateExternalUrl(
 
   const proto = url.protocol.toLowerCase();
   if (proto === "https:") {
-    if (!policy.allowHttps) throw new Error("URL policy violation: https not allowed");
+    if (!policy.allowHttps) {
+      throw new Error("URL policy violation: https not allowed");
+    }
   } else if (proto === "http:") {
     // http permitted only for explicitly-allowlisted local hosts (e.g. self-hosted Ollama)
     if (!policy.allowHttp && !isExplicitlyAllowedLocal) {
-      throw new Error("URL policy violation: http not allowed. Https is required.");
+      throw new Error(
+        "URL policy violation: http not allowed. Https is required.",
+      );
     }
   } else {
     throw new Error(`URL policy violation: unsupported protocol "${proto}"`);
@@ -207,7 +213,9 @@ export function parseAndValidateExternalUrl(
     policy.allowedPorts && !policy.allowedPorts.includes(port) &&
     !isExplicitlyAllowedLocal
   ) {
-    throw new Error(`URL policy violation: port ${port} is not in the allowlist`);
+    throw new Error(
+      `URL policy violation: port ${port} is not in the allowlist`,
+    );
   }
 
   if (isIPLiteral(hostname) && !isExplicitlyAllowedLocal) {
@@ -231,14 +239,18 @@ export function parseAndValidateExternalUrl(
     if (!allowed && policy.allowedHostSuffixes) {
       for (const suffix of policy.allowedHostSuffixes) {
         const s = suffix.toLowerCase();
-        if (hostname === s || hostname.endsWith(s.startsWith(".") ? s : "." + s)) {
+        if (
+          hostname === s || hostname.endsWith(s.startsWith(".") ? s : "." + s)
+        ) {
           allowed = true;
           break;
         }
       }
     }
     if (!allowed) {
-      throw new Error(`URL policy violation: host "${hostname}" is not in the allowlist`);
+      throw new Error(
+        `URL policy violation: host "${hostname}" is not in the allowlist`,
+      );
     }
   }
 
@@ -260,7 +272,9 @@ export async function assertResolvedHostIsPublic(
 
   if (isIPLiteral(host)) {
     if (isPrivateOrReservedIp(host)) {
-      throw new Error("SSRF policy violation: IP resolves to a private/reserved range");
+      throw new Error(
+        "SSRF policy violation: IP resolves to a private/reserved range",
+      );
     }
     return;
   }
