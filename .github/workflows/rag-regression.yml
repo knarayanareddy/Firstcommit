@@ -1,0 +1,86 @@
+name: RAG Regression Guard
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'supabase/functions/ai-task-router/**'
+      - 'supabase/migrations/**'
+      - 'rag-eval/**'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  rag-regression:
+    name: RAG Regression Suite
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        working-directory: ./rag-eval
+        run: npm install
+
+      - name: Verify Environment
+        env:
+          RAG_EVAL_SUPABASE_URL: ${{ secrets.RAG_EVAL_SUPABASE_URL }}
+          RAG_EVAL_SUPABASE_ANON_KEY: ${{ secrets.RAG_EVAL_SUPABASE_ANON_KEY }}
+          RAG_EVAL_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.RAG_EVAL_SUPABASE_SERVICE_ROLE_KEY }}
+          RAG_EVAL_USER_EMAIL: ${{ secrets.RAG_EVAL_USER_EMAIL }}
+          RAG_EVAL_USER_PASSWORD: ${{ secrets.RAG_EVAL_USER_PASSWORD }}
+          RAG_EVAL_PACK_ID: ${{ secrets.RAG_EVAL_PACK_ID }}
+        run: |
+          echo "Verifying required environment variables..."
+          [ -z "$RAG_EVAL_SUPABASE_URL" ] && echo "!! RAG_EVAL_SUPABASE_URL is MISSING"
+          [ -z "$RAG_EVAL_SUPABASE_ANON_KEY" ] && echo "!! RAG_EVAL_SUPABASE_ANON_KEY is MISSING"
+          [ -z "$RAG_EVAL_USER_EMAIL" ] && echo "!! RAG_EVAL_USER_EMAIL is MISSING"
+          [ -z "$RAG_EVAL_USER_PASSWORD" ] && echo "!! RAG_EVAL_USER_PASSWORD is MISSING"
+          [ -z "$RAG_EVAL_PACK_ID" ] && echo "!! RAG_EVAL_PACK_ID is MISSING"
+          echo "Environment check complete."
+
+      - name: Check secrets availability
+        id: secrets-check
+        run: |
+          if [ -z "${{ secrets.RAG_EVAL_SUPABASE_URL }}" ]; then
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "⚠️ RAG_EVAL_SUPABASE_URL secret not configured. Skipping live RAG tests."
+            echo "To enable: Add RAG_EVAL_SUPABASE_URL, RAG_EVAL_SUPABASE_ANON_KEY, RAG_EVAL_SUPABASE_SERVICE_ROLE_KEY, RAG_EVAL_USER_EMAIL, RAG_EVAL_USER_PASSWORD, RAG_EVAL_PACK_ID as repo secrets."
+          else
+            echo "available=true" >> $GITHUB_OUTPUT
+            echo "✅ Secrets available. RAG tests will run."
+          fi
+
+      - name: Run Baseline Suite
+        if: steps.secrets-check.outputs.available == 'true'
+        working-directory: ./rag-eval
+        env:
+          RAG_EVAL_SUPABASE_URL: ${{ secrets.RAG_EVAL_SUPABASE_URL }}
+          RAG_EVAL_SUPABASE_ANON_KEY: ${{ secrets.RAG_EVAL_SUPABASE_ANON_KEY }}
+          RAG_EVAL_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.RAG_EVAL_SUPABASE_SERVICE_ROLE_KEY }}
+          RAG_EVAL_USER_EMAIL: ${{ secrets.RAG_EVAL_USER_EMAIL }}
+          RAG_EVAL_USER_PASSWORD: ${{ secrets.RAG_EVAL_USER_PASSWORD }}
+          RAG_EVAL_PACK_ID: ${{ secrets.RAG_EVAL_PACK_ID }}
+        run: npm run test -- --suite suites/baseline.yaml
+
+      - name: Run Detective Suite
+        if: steps.secrets-check.outputs.available == 'true'
+        working-directory: ./rag-eval
+        env:
+          RAG_EVAL_SUPABASE_URL: ${{ secrets.RAG_EVAL_SUPABASE_URL }}
+          RAG_EVAL_SUPABASE_ANON_KEY: ${{ secrets.RAG_EVAL_SUPABASE_ANON_KEY }}
+          RAG_EVAL_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.RAG_EVAL_SUPABASE_SERVICE_ROLE_KEY }}
+          RAG_EVAL_USER_EMAIL: ${{ secrets.RAG_EVAL_USER_EMAIL }}
+          RAG_EVAL_USER_PASSWORD: ${{ secrets.RAG_EVAL_USER_PASSWORD }}
+          RAG_EVAL_PACK_ID: ${{ secrets.RAG_EVAL_PACK_ID }}
+        run: npm run test -- --suite suites/detective.yaml

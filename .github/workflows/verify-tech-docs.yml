@@ -1,0 +1,26 @@
+name: Verify Technical Documentation
+
+on:
+  pull_request:
+    paths:
+      - 'Technical documents/**'
+      - 'scripts/verify-technical-docs.py'
+      - 'supabase/migrations/**'
+      - 'supabase/functions/**'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  verify-docs:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Run verification script
+        run: python scripts/verify-technical-docs.py

@@ -1,0 +1,72 @@
+name: MCP Security Smoke Test
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/functions/rocketboard-mcp/**'
+      - 'docs/mcp/**'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  smoke-test:
+    name: Run MCP Smoke Test
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          
+      - name: Install execution dependencies
+        run: npm install -g tsx
+        
+      - name: Verify Environment
+        env:
+          MCP_EVAL_SUPABASE_URL: ${{ secrets.MCP_EVAL_SUPABASE_URL }}
+          MCP_EVAL_ANON_KEY: ${{ secrets.MCP_EVAL_ANON_KEY }}
+          MCP_EVAL_USER_EMAIL: ${{ secrets.MCP_EVAL_USER_EMAIL }}
+          MCP_EVAL_USER_PASSWORD: ${{ secrets.MCP_EVAL_USER_PASSWORD }}
+          MCP_EVAL_PACK_ID_ALLOWED: ${{ secrets.MCP_EVAL_PACK_ID }}
+        run: |
+          echo "Verifying required environment variables..."
+          [ -z "$MCP_EVAL_SUPABASE_URL" ] && echo "!! MCP_EVAL_SUPABASE_URL is MISSING"
+          [ -z "$MCP_EVAL_ANON_KEY" ] && echo "!! MCP_EVAL_ANON_KEY is MISSING"
+          [ -z "$MCP_EVAL_USER_EMAIL" ] && echo "!! MCP_EVAL_USER_EMAIL is MISSING"
+          [ -z "$MCP_EVAL_USER_PASSWORD" ] && echo "!! MCP_EVAL_USER_PASSWORD is MISSING"
+          [ -z "$MCP_EVAL_PACK_ID_ALLOWED" ] && echo "!! MCP_EVAL_PACK_ID_ALLOWED is MISSING"
+          echo "Environment check complete."
+
+      - name: Check secrets availability
+        id: secrets-check
+        run: |
+          if [ -z "${{ secrets.MCP_EVAL_SUPABASE_URL }}" ]; then
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "⚠️ MCP_EVAL_SUPABASE_URL secret not configured. Skipping MCP smoke test."
+            echo "To enable: Add MCP_EVAL_SUPABASE_URL, MCP_EVAL_ANON_KEY, MCP_EVAL_USER_EMAIL, MCP_EVAL_USER_PASSWORD, MCP_EVAL_PACK_ID as repo secrets."
+          else
+            echo "available=true" >> $GITHUB_OUTPUT
+            echo "✅ Secrets available. MCP smoke test will run."
+          fi
+
+      - name: Run MCP Smoke Test
+        if: steps.secrets-check.outputs.available == 'true'
+        env:
+          MCP_EVAL_SUPABASE_URL: ${{ secrets.MCP_EVAL_SUPABASE_URL }}
+          MCP_EVAL_ANON_KEY: ${{ secrets.MCP_EVAL_ANON_KEY }}
+          MCP_EVAL_USER_EMAIL: ${{ secrets.MCP_EVAL_USER_EMAIL }}
+          MCP_EVAL_USER_PASSWORD: ${{ secrets.MCP_EVAL_USER_PASSWORD }}
+          MCP_EVAL_PACK_ID_ALLOWED: ${{ secrets.MCP_EVAL_PACK_ID }}
+          MCP_EVAL_PACK_ID_FORBIDDEN: ${{ secrets.MCP_EVAL_PACK_ID_FORBIDDEN }}  # Optional
+          MCP_EVAL_RUN_RATELIMIT_TEST: "false"  # Default off in CI to avoid throttling
+        run: |
+          echo "Running isomorphic typescript smoke test (v0 spec)..."
+          # Run using npx to ensure binary is in PATH
+          npx tsx scripts/mcp-smoke-test.ts

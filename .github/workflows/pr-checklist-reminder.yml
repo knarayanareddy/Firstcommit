@@ -1,0 +1,43 @@
+name: PR Checklist Reminder
+
+on:
+  pull_request:
+    types: [opened, edited]
+    paths:
+      - 'supabase/functions/**'
+      - 'supabase/migrations/**'
+      - 'vscode-extension/**'
+      - 'docs/mcp/**'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  check-checklist:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check for Cross-cutting acceptance
+        id: check
+        run: |
+          BODY="${{ github.event.pull_request.body }}"
+          if [[ ! "$BODY" =~ "Cross-cutting acceptance" ]]; then
+            echo "missing=true" >> $GITHUB_OUTPUT
+          else
+            echo "missing=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post Comment
+        if: steps.check.outputs.missing == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "### ⚠️ Pre-release Process Nudge\n\nIt looks like this PR touches sensitive backend, database, or tool code. Please ensure you have included and verified the **Cross-cutting acceptance checklist** as required by [AGENTS.md](https://github.com/${{ github.repository }}/blob/main/AGENTS.md).\n\nCopy the checklist from the PR template and tick off the items to acknowledge you've followed the release discipline. Thank you!"
+            })

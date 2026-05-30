@@ -1,0 +1,83 @@
+name: Edge Security Audit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  audit-edge:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Get changed Edge files
+        id: files
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          # Robustly find changed .ts files under supabase/functions
+          # Using || true to prevent grep from failing the step if no files match
+          RAW_FILES=$(git diff --name-only origin/main...HEAD | grep '^supabase/functions/.*\.ts$' || true)
+          # Clean up: join into comma-separated list
+          CSV_PATHS=$(echo "$RAW_FILES" | tr '\n' ',' | sed 's/,$//' | sed 's/^,//')
+          echo "EDGE_AUDIT_PATHS=$CSV_PATHS" >> $GITHUB_ENV
+          echo "Changed Edge TS files: $CSV_PATHS"
+
+      - name: Run Edge Security Audit
+        run: npm run audit:edge
+        
+      - name: Run Lint
+        run: npm run lint
+        
+      - name: Run Tests
+        run: npm test
+
+  deno-check:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Install Deno dependencies
+        run: deno install --allow-scripts
+      - name: Deno Format Check
+        run: deno fmt --check supabase/functions
+      - name: Deno Type Check
+        run: |
+          # Check shared lib first
+          deno check supabase/functions/_shared/*.ts
+
+          # Check each function individually to respect local deno.json / import maps
+          for dir in supabase/functions/*; do
+            if [ -d "$dir" ] && [ "$dir" != "supabase/functions/_shared" ]; then
+              if [ -f "$dir/index.ts" ]; then
+                echo "Checking $dir..."
+                if [ -f "$dir/deno.json" ]; then
+                  deno check --config "$dir/deno.json" "$dir/index.ts"
+                else
+                  deno check "$dir/index.ts"
+                fi
+              fi
+            fi
+          done

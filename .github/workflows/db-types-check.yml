@@ -1,0 +1,36 @@
+name: Database Type Safety Check
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'supabase/migrations/**'
+      - 'src/integrations/supabase/types.ts'
+      - 'scripts/check_types_tables.ts'
+      - '.github/workflows/db-types-check.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 09:00 UTC
+
+jobs:
+  check-types:
+    if: github.repository == 'knarayanareddy/rocketboard-ai-guide'
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      # Using npm install (not npm ci) because package-lock.json is generated
+      # on macOS and CI runs on Linux; optional deps like esbuild/tsx have
+      # platform-specific binaries that npm ci refuses to resolve cross-platform.
+      - name: Install dependencies
+        run: npm install
+      - uses: supabase/setup-cli@v1
+      - run: supabase start --ignore-health-check
+      - name: Assert DB is reachable
+        run: supabase db query "select 1 as ok;"
+      - run: supabase db reset
+      - run: npm run check:types
