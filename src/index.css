@@ -1,0 +1,434 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ===== DEFAULT LIGHT (Cyber Cyan light) ===== */
+  :root {
+    --background: 200 20% 97%;
+    --foreground: 210 25% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 210 25% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 25% 10%;
+    --primary: 174 72% 40%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 200 15% 92%;
+    --secondary-foreground: 210 25% 10%;
+    --muted: 200 15% 93%;
+    --muted-foreground: 210 10% 45%;
+    --accent: 263 60% 55%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 210 15% 87%;
+    --input: 210 15% 87%;
+    --ring: 174 72% 40%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --radius: 0.75rem;
+
+    --sidebar-background: 200 20% 97%;
+    --sidebar-foreground: 210 15% 35%;
+    --sidebar-primary: 174 72% 40%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 200 15% 92%;
+    --sidebar-accent-foreground: 174 72% 32%;
+    --sidebar-border: 210 15% 88%;
+    --sidebar-ring: 174 72% 40%;
+
+    --glow: 174 72% 40%;
+    --glow-purple: 263 60% 55%;
+    --surface: 200 15% 96%;
+    --surface-raised: 0 0% 100%;
+    --track-frontend: 174 72% 40%;
+    --track-backend: 263 60% 55%;
+    --track-infra: 32 90% 48%;
+    --track-cross: 340 70% 52%;
+
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+  }
+
+  /* ===== CYBER CYAN (dark) ===== */
+  .dark {
+    --background: 220 25% 6%;
+    --foreground: 220 15% 90%;
+    --card: 220 22% 9%;
+    --card-foreground: 220 15% 90%;
+    --popover: 220 22% 9%;
+    --popover-foreground: 220 15% 90%;
+    --primary: 174 72% 46%;
+    --primary-foreground: 220 25% 6%;
+    --secondary: 220 20% 14%;
+    --secondary-foreground: 220 15% 80%;
+    --muted: 220 20% 14%;
+    --muted-foreground: 220 10% 50%;
+    --accent: 263 70% 58%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --border: 220 20% 16%;
+    --input: 220 20% 16%;
+    --ring: 174 72% 46%;
+    --surface: 220 22% 8%;
+    --surface-raised: 220 22% 11%;
+    --glow: 174 72% 46%;
+    --glow-purple: 263 70% 58%;
+
+    --sidebar-background: 220 28% 4%;
+    --sidebar-foreground: 220 15% 65%;
+    --sidebar-primary: 174 72% 46%;
+    --sidebar-primary-foreground: 220 25% 6%;
+    --sidebar-accent: 220 22% 10%;
+    --sidebar-accent-foreground: 174 72% 56%;
+    --sidebar-border: 220 22% 12%;
+    --sidebar-ring: 174 72% 46%;
+  }
+
+  /* ===== EMBER LIGHT ===== */
+  .theme-ember:not(.dark) {
+    --background: 30 25% 97%;
+    --foreground: 15 25% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 15 25% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 15 25% 10%;
+    --primary: 38 92% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 30 18% 91%;
+    --secondary-foreground: 15 25% 10%;
+    --muted: 30 18% 93%;
+    --muted-foreground: 20 12% 42%;
+    --accent: 0 68% 50%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 25 15% 86%;
+    --input: 25 15% 86%;
+    --ring: 38 92% 45%;
+    --surface: 30 18% 96%;
+    --surface-raised: 0 0% 100%;
+    --glow: 38 92% 45%;
+    --glow-purple: 0 68% 50%;
+    --sidebar-background: 30 22% 96%;
+    --sidebar-foreground: 20 12% 35%;
+    --sidebar-primary: 38 92% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 30 18% 91%;
+    --sidebar-accent-foreground: 38 88% 36%;
+    --sidebar-border: 25 15% 87%;
+    --sidebar-ring: 38 92% 45%;
+  }
+
+  /* ===== EMBER DARK ===== */
+  .theme-ember.dark {
+    --background: 15 20% 6%;
+    --foreground: 30 15% 88%;
+    --card: 15 18% 9%;
+    --card-foreground: 30 15% 88%;
+    --popover: 15 18% 9%;
+    --popover-foreground: 30 15% 88%;
+    --primary: 38 92% 50%;
+    --primary-foreground: 15 25% 6%;
+    --secondary: 15 18% 14%;
+    --secondary-foreground: 30 15% 78%;
+    --muted: 15 18% 14%;
+    --muted-foreground: 20 10% 48%;
+    --accent: 0 72% 55%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 15 18% 16%;
+    --input: 15 18% 16%;
+    --ring: 38 92% 50%;
+    --surface: 15 18% 8%;
+    --surface-raised: 15 18% 11%;
+    --glow: 38 92% 50%;
+    --glow-purple: 0 72% 55%;
+    --sidebar-background: 15 22% 4%;
+    --sidebar-foreground: 20 12% 60%;
+    --sidebar-primary: 38 92% 50%;
+    --sidebar-primary-foreground: 15 25% 6%;
+    --sidebar-accent: 15 18% 10%;
+    --sidebar-accent-foreground: 38 90% 58%;
+    --sidebar-border: 15 18% 12%;
+    --sidebar-ring: 38 92% 50%;
+  }
+
+  /* ===== AURORA LIGHT ===== */
+  .theme-aurora:not(.dark) {
+    --background: 155 20% 97%;
+    --foreground: 155 25% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 155 25% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 155 25% 10%;
+    --primary: 160 84% 32%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 155 15% 91%;
+    --secondary-foreground: 155 25% 10%;
+    --muted: 155 15% 93%;
+    --muted-foreground: 160 10% 40%;
+    --accent: 187 75% 38%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 155 12% 86%;
+    --input: 155 12% 86%;
+    --ring: 160 84% 32%;
+    --surface: 155 15% 96%;
+    --surface-raised: 0 0% 100%;
+    --glow: 160 84% 32%;
+    --glow-purple: 187 75% 38%;
+    --sidebar-background: 155 18% 96%;
+    --sidebar-foreground: 155 12% 35%;
+    --sidebar-primary: 160 84% 32%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 155 15% 91%;
+    --sidebar-accent-foreground: 160 80% 28%;
+    --sidebar-border: 155 12% 87%;
+    --sidebar-ring: 160 84% 32%;
+  }
+
+  /* ===== AURORA DARK ===== */
+  .theme-aurora.dark {
+    --background: 155 25% 5%;
+    --foreground: 155 12% 88%;
+    --card: 155 20% 8%;
+    --card-foreground: 155 12% 88%;
+    --popover: 155 20% 8%;
+    --popover-foreground: 155 12% 88%;
+    --primary: 160 84% 39%;
+    --primary-foreground: 155 30% 5%;
+    --secondary: 155 18% 13%;
+    --secondary-foreground: 155 12% 78%;
+    --muted: 155 18% 13%;
+    --muted-foreground: 160 10% 46%;
+    --accent: 187 80% 42%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 155 18% 15%;
+    --input: 155 18% 15%;
+    --ring: 160 84% 39%;
+    --surface: 155 20% 7%;
+    --surface-raised: 155 20% 10%;
+    --glow: 160 84% 39%;
+    --glow-purple: 187 80% 42%;
+    --sidebar-background: 155 28% 3%;
+    --sidebar-foreground: 155 12% 58%;
+    --sidebar-primary: 160 84% 39%;
+    --sidebar-primary-foreground: 155 30% 5%;
+    --sidebar-accent: 155 20% 9%;
+    --sidebar-accent-foreground: 160 80% 48%;
+    --sidebar-border: 155 20% 11%;
+    --sidebar-ring: 160 84% 39%;
+  }
+
+  /* ===== PHANTOM LIGHT ===== */
+  .theme-phantom:not(.dark) {
+    --background: 240 8% 97%;
+    --foreground: 240 8% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 8% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 8% 10%;
+    --primary: 240 5% 40%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 6% 92%;
+    --secondary-foreground: 240 8% 10%;
+    --muted: 240 6% 93%;
+    --muted-foreground: 240 5% 40%;
+    --accent: 239 75% 58%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 6% 87%;
+    --input: 240 6% 87%;
+    --ring: 239 75% 58%;
+    --surface: 240 6% 96%;
+    --surface-raised: 0 0% 100%;
+    --glow: 240 5% 40%;
+    --glow-purple: 239 75% 58%;
+    --sidebar-background: 240 6% 96%;
+    --sidebar-foreground: 240 5% 38%;
+    --sidebar-primary: 239 75% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 6% 91%;
+    --sidebar-accent-foreground: 239 72% 50%;
+    --sidebar-border: 240 6% 88%;
+    --sidebar-ring: 239 75% 58%;
+  }
+
+  /* ===== PHANTOM DARK ===== */
+  .theme-phantom.dark {
+    --background: 240 6% 7%;
+    --foreground: 240 5% 85%;
+    --card: 240 5% 10%;
+    --card-foreground: 240 5% 85%;
+    --popover: 240 5% 10%;
+    --popover-foreground: 240 5% 85%;
+    --primary: 240 5% 64%;
+    --primary-foreground: 240 6% 7%;
+    --secondary: 240 5% 15%;
+    --secondary-foreground: 240 5% 75%;
+    --muted: 240 5% 15%;
+    --muted-foreground: 240 4% 45%;
+    --accent: 239 84% 67%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 5% 17%;
+    --input: 240 5% 17%;
+    --ring: 240 5% 64%;
+    --surface: 240 5% 8%;
+    --surface-raised: 240 5% 12%;
+    --glow: 240 5% 64%;
+    --glow-purple: 239 84% 67%;
+    --sidebar-background: 240 8% 5%;
+    --sidebar-foreground: 240 5% 55%;
+    --sidebar-primary: 240 5% 64%;
+    --sidebar-primary-foreground: 240 6% 7%;
+    --sidebar-accent: 240 5% 11%;
+    --sidebar-accent-foreground: 239 80% 72%;
+    --sidebar-border: 240 5% 13%;
+    --sidebar-ring: 239 84% 67%;
+  }
+
+  /* ===== SAKURA LIGHT ===== */
+  .theme-sakura:not(.dark) {
+    --background: 330 15% 97%;
+    --foreground: 330 15% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 330 15% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 330 15% 10%;
+    --primary: 330 72% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 330 12% 92%;
+    --secondary-foreground: 330 15% 10%;
+    --muted: 330 12% 93%;
+    --muted-foreground: 330 8% 42%;
+    --accent: 270 60% 62%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 330 10% 87%;
+    --input: 330 10% 87%;
+    --ring: 330 72% 55%;
+    --surface: 330 12% 96%;
+    --surface-raised: 0 0% 100%;
+    --glow: 330 72% 55%;
+    --glow-purple: 270 60% 62%;
+    --sidebar-background: 330 14% 96%;
+    --sidebar-foreground: 330 10% 35%;
+    --sidebar-primary: 330 72% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 330 12% 91%;
+    --sidebar-accent-foreground: 330 68% 45%;
+    --sidebar-border: 330 10% 88%;
+    --sidebar-ring: 330 72% 55%;
+  }
+
+  /* ===== SAKURA DARK ===== */
+  .theme-sakura.dark {
+    --background: 330 15% 7%;
+    --foreground: 330 10% 88%;
+    --card: 330 12% 10%;
+    --card-foreground: 330 10% 88%;
+    --popover: 330 12% 10%;
+    --popover-foreground: 330 10% 88%;
+    --primary: 330 86% 70%;
+    --primary-foreground: 330 20% 7%;
+    --secondary: 330 12% 15%;
+    --secondary-foreground: 330 10% 78%;
+    --muted: 330 12% 15%;
+    --muted-foreground: 330 8% 48%;
+    --accent: 270 70% 72%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 330 12% 17%;
+    --input: 330 12% 17%;
+    --ring: 330 86% 70%;
+    --surface: 330 12% 8%;
+    --surface-raised: 330 12% 12%;
+    --glow: 330 86% 70%;
+    --glow-purple: 270 70% 72%;
+    --sidebar-background: 330 18% 5%;
+    --sidebar-foreground: 330 10% 58%;
+    --sidebar-primary: 330 86% 70%;
+    --sidebar-primary-foreground: 330 20% 7%;
+    --sidebar-accent: 330 12% 11%;
+    --sidebar-accent-foreground: 330 82% 75%;
+    --sidebar-border: 330 12% 13%;
+    --sidebar-ring: 330 86% 70%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+  }
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Theme transition — only applied when switching */
+.theme-transitioning * {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease !important;
+}
+
+@layer utilities {
+  .glow-border {
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.2), 0 0 20px -5px hsl(var(--primary) / 0.15);
+  }
+  .glow-text {
+    text-shadow: 0 0 20px hsl(var(--primary) / 0.5);
+  }
+  .gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--glow-purple)));
+  }
+  .gradient-text {
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--glow-purple)));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  /* Touch-friendly utilities */
+  .touch-manipulation {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Mobile touch improvements */
+@media (pointer: coarse) {
+  button, a, [role="button"], input, select, textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+  input, select, textarea {
+    font-size: 16px; /* Prevents iOS zoom on focus */
+  }
+}
+
+/* Hide scrollbar utility */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
