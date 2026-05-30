@@ -82,7 +82,10 @@ export async function sha256(message: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function buildEvidenceManifest(retrieval: any, sourceMap: any[] = []): any {
+export function buildEvidenceManifest(
+  retrieval: any,
+  sourceMap: any[] = [],
+): any {
   const manifest: any = {
     citations: sourceMap.map((cit, idx) => ({
       badge: cit.badge || `S${idx + 1}`,

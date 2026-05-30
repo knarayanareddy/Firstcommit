@@ -97,9 +97,6 @@ export async function recordRagMetrics(trace: TraceBuilder, envelope: any) {
 
 // ─── AI AUDIT LOG (Governance & Compliance) ───
 
-
-
-
 export async function recordAiAudit(
   trace: TraceBuilder,
   envelope: any,
