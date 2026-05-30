@@ -1,0 +1,1 @@
+UPDATE public.ingestion_jobs SET status='failed', error_message='Reset for re-test', completed_at=now() WHERE pack_id='a6425186-52bb-461e-b691-88dd75a0a229' AND status='processing';

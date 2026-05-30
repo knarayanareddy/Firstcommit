@@ -1,0 +1,2 @@
+UPDATE public.ingestion_jobs SET status='failed', error_message='Reset: fix ingestion_job_id column', completed_at=now() WHERE id='51d41e44-f460-4ae7-aed1-fb1ab3ae6b67' AND status='processing';
+DELETE FROM public.ingestion_job_state WHERE job_id='51d41e44-f460-4ae7-aed1-fb1ab3ae6b67';

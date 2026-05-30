@@ -1,0 +1,1 @@
+DELETE FROM knowledge_chunks WHERE pack_id = '00000000-0000-0000-0000-000000000002' AND source_id = '3d0c4cfa-ac38-4e33-9fd8-9f5bf2240eb1';

@@ -1,0 +1,16 @@
+ALTER TABLE public.rag_metrics
+  ADD COLUMN IF NOT EXISTS task_type text,
+  ADD COLUMN IF NOT EXISTS attempts integer DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS chunks_retrieved integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS chunks_after_rerank integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS unique_files_count integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS citations_found integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS citations_verified integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS citations_failed integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS strip_rate double precision DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS claims_total integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS claims_stripped integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS snippets_resolved integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS grounding_score double precision DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS grounding_gate_passed boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS grounding_gate_reason text;

@@ -1,0 +1,1 @@
+UPDATE public.ingestion_jobs SET status = 'failed', completed_at = now(), error_message = 'Reset: pre-redeploy cleanup for commit 91a8630 (stream timeout fix)' WHERE status = 'processing';

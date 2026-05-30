@@ -1,0 +1,1 @@
+UPDATE public.ingestion_jobs SET status = 'failed', completed_at = now(), error_message = 'Reset: stale processing job cleared automatically' WHERE status = 'processing' AND started_at < now() - interval '5 minutes'

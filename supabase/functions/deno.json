@@ -1,0 +1,9 @@
+{
+  "nodeModulesDir": "auto",
+  "imports": {
+    "hono": "npm:hono@^4.12.9",
+    "@supabase/mcp-utils": "npm:@supabase/mcp-utils@^0.4.0",
+    "zod": "npm:zod@^3.22.4",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.45.6"
+  }
+}

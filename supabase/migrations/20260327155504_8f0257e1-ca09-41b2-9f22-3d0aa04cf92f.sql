@@ -1,0 +1,1 @@
+UPDATE public.ingestion_jobs SET status = 'failed', completed_at = now(), error_message = 'Reset: final stabilization pass for commit 386e4a5' WHERE status = 'processing';

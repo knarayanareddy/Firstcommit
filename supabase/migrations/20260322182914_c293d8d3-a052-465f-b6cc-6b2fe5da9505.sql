@@ -1,0 +1,1 @@
+UPDATE public.ingestion_jobs SET status = 'failed', completed_at = now(), error_message = 'Reset: stale processing job cleared for re-sync' WHERE id = '4fc6aeae-4d9e-4ba8-96c9-7bff78bccbf2' AND status = 'processing'

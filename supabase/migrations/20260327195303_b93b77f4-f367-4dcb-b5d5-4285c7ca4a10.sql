@@ -1,0 +1,2 @@
+UPDATE public.ingestion_jobs SET status='failed', error_message='Reset pre-retry', completed_at=now() WHERE id='ac68ea77-0ff7-45d4-8437-5361adf0c332' AND status='processing';
+DELETE FROM public.ingestion_job_state WHERE job_id='ac68ea77-0ff7-45d4-8437-5361adf0c332';
