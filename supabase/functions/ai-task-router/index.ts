@@ -5,26 +5,32 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
+  buildSpansBlock,
+  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildLimitsConstraintBlock,
   buildMermaidBlock,
-  buildPackBlock,
-  buildSpansBlock,
+  buildLimitsConstraintBlock,
 } from "./prompts.ts";
 import {
   errorResponse,
-  jsonResponse,
   structuredError,
+  jsonResponse,
   unsupportedTask,
 } from "./responses.ts";
 import { authenticateRequest, checkPackAccess } from "./auth.ts";
 import {
-  type AIConfig,
-  callAI,
-  parseAIJson,
+  resolveGroundingPolicy,
+  quickVerifyCitations,
+  sha256,
+  buildEvidenceManifest,
+} from "./grounding.ts";
+import {
   PROVIDER_ENDPOINTS,
   resolveAIConfig,
+  callAI,
+  parseAIJson,
+  type AIConfig,
 } from "./ai-call.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
@@ -117,9 +123,7 @@ function redactText(text: string): { text: string; wasRedacted: boolean } {
 }
 
 // ─── GROUNDING POLICY ───
-function resolveGroundingPolicy(
-  taskType: string,
-  pack: any = {},
+,
 ): GroundingPolicy {
   // Use pack settings if available, otherwise fallback to environment variables
   const packPolicy = pack.grounding_policy || {};
@@ -254,10 +258,8 @@ GROUNDING RULES (STRICT NO-HALLUCINATION CONTRACT):
 
 // buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
 
-async function quickVerifyCitations(
-  content: string,
-  spans: any[],
-): Promise<{ verified: string; warnings: string[] }> {
+
+> {
   // Use non-greedy (.+?) with a lookahead (?=:\d+-\d+\]) to stop at the LAST numeric boundary.
   // This allows multiple [SOURCE: ...] tags on a single line even if file paths contain colons (repo:...).
   // A greedy (.+) would consume multiple citations into a single match on the same line.
@@ -290,6 +292,7 @@ async function quickVerifyCitations(
 }
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
+
 
 // BYOK config + resolveAIConfig moved to ./ai-call.ts (monolith split, stage 2a).
 
@@ -517,37 +520,9 @@ async function recordRagMetrics(trace: TraceBuilder, envelope: any) {
 }
 
 // ─── AI AUDIT LOG (Governance & Compliance) ───
-async function sha256(message: string): Promise<string> {
-  const msgUint8 = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
-function buildEvidenceManifest(retrieval: any, sourceMap: any[] = []): any {
-  const manifest: any = {
-    citations: sourceMap.map((cit, idx) => ({
-      badge: cit.badge || `S${idx + 1}`,
-      chunk_ref: cit.chunk_ref,
-      chunk_pk: cit.chunk_pk,
-      stable_chunk_id: cit.stable_chunk_id,
-      chunk_id: cit.stable_chunk_id || cit.chunk_id, // TEXT fallback
-      path: cit.path || cit.filepath,
-      start: cit.start || cit.line_start || cit.start_line,
-      end: cit.end || cit.line_end || cit.end_line,
-    })),
-    spans_used: (retrieval.evidence_spans || []).map((s: any) => ({
-      chunk_ref: s.chunk_ref,
-      chunk_pk: s.chunk_pk,
-      stable_chunk_id: s.stable_chunk_id,
-      chunk_id: s.stable_chunk_id || s.chunk_id, // TEXT fallback
-      path: s.path,
-      start_line: s.line_start || s.start_line,
-      end_line: s.line_end || s.end_line,
-    })),
-  };
-  return manifest;
-}
+
+
 
 async function recordAiAudit(
   trace: TraceBuilder,
