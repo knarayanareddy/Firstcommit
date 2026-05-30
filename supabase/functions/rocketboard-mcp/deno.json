@@ -1,0 +1,13 @@
+{
+  "nodeModulesDir": "auto",
+  "imports": {
+    "hono": "https://deno.land/x/hono@v4.3.11/mod.ts",
+    "hono/": "https://deno.land/x/hono@v4.3.11/",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.45.6",
+    "zod": "https://deno.land/x/zod@v3.22.4/mod.ts",
+    "@supabase/mcp-utils": "npm:@supabase/mcp-utils@0.2.0"
+  },
+  "tasks": {
+    "start": "deno run --allow-net --allow-env index.ts"
+  }
+}

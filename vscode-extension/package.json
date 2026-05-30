@@ -1,0 +1,105 @@
+{
+  "name": "rocketboard-vscode",
+  "displayName": "RocketBoard",
+  "description": "Explains code selections using RocketBoard's grounded AI",
+  "version": "0.1.0",
+  "publisher": "RocketBoard",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:rocketboard.explainSelection",
+    "onCommand:rocketboard.setToken",
+    "onCommand:rocketboard.clearToken",
+    "onCommand:rocketboard.selectPack"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "rocketboard.explainSelection",
+        "title": "RocketBoard: Explain selection"
+      },
+      {
+        "command": "rocketboard.setToken",
+        "title": "RocketBoard: Set token"
+      },
+      {
+        "command": "rocketboard.clearToken",
+        "title": "RocketBoard: Clear token"
+      },
+      {
+        "command": "rocketboard.selectPack",
+        "title": "RocketBoard: Select pack"
+      }
+    ],
+    "configuration": {
+      "title": "RocketBoard",
+      "properties": {
+        "rocketboard.supabaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Your Supabase project URL (e.g., https://xyz.supabase.co)"
+        },
+        "rocketboard.packId": {
+          "type": "string",
+          "default": "",
+          "description": "The UUID of the pack to ground against"
+        },
+        "rocketboard.maxSelectionChars": {
+          "type": "number",
+          "default": 8000,
+          "description": "Maximum characters to send from the selection"
+        },
+        "rocketboard.includeContextLines": {
+          "type": "number",
+          "default": 20,
+          "description": "Number of surrounding lines to include as context"
+        },
+        "rocketboard.requestTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "Timeout for Edge Function requests in milliseconds"
+        },
+        "rocketboard.trace": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose tracing for AI requests"
+        },
+        "rocketboard.sourceMappings": {
+          "type": "object",
+          "default": {},
+          "description": "Mapping of source identifiers (slugs or IDs) to local workspace folders. Format: { \"slug\": \"subfolder/path\" or \"/abs/path\" }",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && node esbuild.js --production",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dompurify": "^3.1.0",
+    "marked": "^12.0.1"
+  },
+  "devDependencies": {
+    "@types/dompurify": "^3.0.5",
+    "@types/marked": "^5.0.2",
+    "@types/node": "^18.x",
+    "@types/vscode": "^1.80.0",
+    "esbuild": "^0.20.2",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.4.5"
+  }
+}
