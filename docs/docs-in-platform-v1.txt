@@ -1,0 +1,31 @@
+DOCS IN PLATFORM (V1) - DESIGN NOTE
+
+SCOPE
+Import existing repository technical documents into the RocketBoard platform as trackable, interactive "Pack Docs" with interactive blocks (checklists, code, mermaid), AI integrations ("Ask Rocket", Evidence Mode), and MCP exposure.
+
+V1 Constraints:
+- GitHub remains the single source of truth for doc content.
+- Docs are parsed and synced into Postgres via an Edge Function (`sync-pack-docs`).
+- Learners can read docs and track progress, but ONLY Authors can trigger syncs or edit metadata.
+- All docs are pack-isolated via strict RLS.
+
+DATABASE SCHEMA
+- `pack_docs`: Core document metadata (slug, title, category, status, version) and `content_plain` for fast search/MCP.
+- `pack_doc_blocks`: Interactive parsed widgets (headings, checklists, callouts, code blocks).
+- `pack_doc_progress`: Learner progress tracking (status, checklist_state) associated with the doc.
+- `pack_doc_edges`: (Optional/Future) Graph relations between documents.
+
+SYNC STRATEGY (sync-pack-docs)
+- Triggered manually by Authors via the Docs Hub Admin UI.
+- Scans `knowledge_chunks` for `path` starting with "Technical documents/" or "AGENTS.md".
+- Stitches chunks by sequence, purges / redaction filtering via `_shared/secret-patterns.ts`.
+- Lightweight Regex parsing on stitched text generates blocks (headings via '1)', '##'; callouts via 'NOTE:'; checklists via '- [ ]').
+- Upserts to `pack_docs` and `pack_doc_blocks` cleanly. Increments version if SHA256 hashes differ.
+
+Frontend Integration
+- Docs Hub (`/packs/:packId/docs`) displaying categorized cards + progress indicators.
+- Doc Detail rendering stitched blocks, table of contents, and "Mark Done" tracking via `pack_doc_progress`.
+- "Ask Rocket" injects context into the envelope-builder for a direct conversation about the Doc scope.
+
+MCP Integration
+- Expose `rocketboard://pack/<id>/docs/index` and `rocketboard://pack/<id>/docs/<slug>` URIs inside the existing `rocketboard-mcp` transport for local agent retrieval.
