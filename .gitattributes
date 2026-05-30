@@ -1,0 +1,6 @@
+# Enforce LF line endings for Deno/Edge Function TypeScript files
+# deno fmt --check requires LF; CRLF will cause CI failures on Linux
+supabase/functions/**/*.ts text eol=lf
+
+# Default for all other text files
+* text=auto
