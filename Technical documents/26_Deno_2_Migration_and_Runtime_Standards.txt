@@ -1,0 +1,61 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 26_Deno_2_Migration_and_Runtime_Standards.txt
+Purpose: Guidelines and standards for the Deno 2.0 runtime, dependency 
+         management, and common CLI flag usage across Edge Functions.
+Audience: Backend Engineers, DevOps
+Last Updated: 2026-03-25
+Related Code Paths:
+  - supabase/functions/deno.json
+  - supabase/functions/*/deno.json
+================================================================================
+
+1. DENO 2.0 MIGRATION SUMMARY
+------------------------------
+RocketBoard has migrated from Deno 1.x to Deno 2.0 to leverage improved 
+Performance and native Node.js compatibility features.
+
+Key Changes:
+- Deprecation of "nodeModulesDir": true.
+- Migration to "nodeModulesDir": "auto" in root and function-level deno.json.
+- Improved resolution for npm: specifiers.
+
+2. RUNTIME CONFIGURATION (deno.json)
+--------------------------------------
+The root `supabase/functions/deno.json` should contain:
+{
+  "nodeModulesDir": "auto"
+}
+
+Function-level `deno.json` files may override this if specific import maps 
+are required, but the `nodeModulesDir` standard must be maintained for 
+consistent local development.
+
+3. MANDATORY CLI FLAGS
+-----------------------
+All local execution and CI verification scripts should use:
+
+- --check: Enforces type-checking (Deno 2.0 skips by default for speed).
+- --no-config: Use only when explicit configuration isolation is needed.
+- --allow-env: Required for reading ROCKETBOARD_INTERNAL_SECRET and other keys.
+
+4. FORMATTING STANDARDS
+------------------------
+RocketBoard enforces Deno's built-in formatter:
+
+Command: `deno fmt supabase/functions`
+CI Gate: `deno fmt --check supabase/functions`
+
+All PRs must pass the formatting check. Multi-line Response objects and 
+long exported functions should be formatted according to Deno's standard 
+(e.g., trailing commas in multi-line objects).
+
+5. PINNING DEPENDENCIES
+------------------------
+- @supabase/supabase-js: MUST be pinned to @2.45.6 for stability.
+- Standard Library: Use versioned URLs (e.g., https://deno.land/std@0.224.0/...).
+- External NPM packages: Use npm:prefix with specific versions.
+
+================================================================================
+END OF 26_Deno_2_Migration_and_Runtime_Standards.txt
+================================================================================

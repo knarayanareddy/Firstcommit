@@ -1,0 +1,32 @@
+version: 1
+defaults:
+  task_type: global_chat
+  max_spans: 10
+  detective_mode: false
+  must_pass_gate: true
+  thresholds:
+    min_citations: 2
+    max_strip_rate: 0.20
+    max_attempts: 2
+    min_unique_files: 2
+    max_latency_ms: 30000
+
+tests:
+  - id: auth-flow-handler
+    name: "Explain handler flow across files"
+    query: "Explain how the request handler works and where auth is validated."
+    thresholds:
+      min_unique_files: 2
+
+  - id: global-overview
+    name: "General platform capabilities"
+    query: "What can RocketBoard do? Explain modules and tracks."
+    thresholds:
+      min_citations: 2
+
+  - id: intentionally-unknown
+    name: "Unknown should refuse"
+    query: "Explain the payroll processing pipeline."
+    must_pass_gate: false
+    thresholds:
+      max_attempts: 1

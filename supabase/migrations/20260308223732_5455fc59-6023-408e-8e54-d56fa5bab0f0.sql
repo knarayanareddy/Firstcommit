@@ -1,0 +1,1 @@
+ALTER TABLE public.pending_invites ADD CONSTRAINT pending_invites_pack_id_email_unique UNIQUE (pack_id, email);

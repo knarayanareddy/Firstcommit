@@ -1,0 +1,156 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 15_Roadmaps_Playlists_30_60_90.txt
+Purpose: Complete specification of the Roadmap/Playlist system for structured
+         30-60-90 day onboarding plans.
+Audience: Backend Engineers, Frontend Engineers, Product
+Last Updated: 2026-03-19
+Related Code Paths:
+  - supabase/migrations/20260329000000_roadmap_playlists.sql
+  - supabase/migrations/20260329000001_roadmap_hardening.sql
+  - supabase/migrations/20260329000002_roadmap_feature_flag.sql
+  - src/pages/RoadmapPage.tsx
+  - src/pages/RoadmapBuilder.tsx
+  - src/pages/PlanPage.tsx
+================================================================================
+
+1. PURPOSE
+-----------
+Structured 30-60-90 day learning plans. Authors create playlists grouped into
+three phases; learners get personalized assignment tracks with date-based unlock
+and dependency-based blocking.
+
+2. FEATURE FLAG
+----------------
+  Table: packs.roadmap_enabled BOOLEAN DEFAULT false
+  Migration: supabase/migrations/20260329000002_roadmap_feature_flag.sql
+  All roadmap queries should be gated on this flag.
+  To enable: UPDATE packs SET roadmap_enabled=true WHERE id=:pack_id;
+
+3. DATA MODEL SUMMARY
+----------------------
+  playlists (phase containers):
+    - pack_id   → scoped to a pack
+    - phase TEXT → 'day_1_30' | 'day_31_60' | 'day_61_90'
+    - title, description, required BOOL
+    - owner_user_id, owner_display_name (for "assigned by" visibility)
+    - default_start_offset_days INT (when this playlist starts)
+
+  playlist_items (items within a phase):
+    - playlist_id → parent playlist
+    - sort_order INT
+    - item_type → 'module' | 'section' | 'quiz' | 'milestone' | 'task' | 'link'
+    - module_id → FK to generated_modules (optional)
+    - module_key TEXT, section_id TEXT (for content linking)
+    - due_offset_days INT (days from assignment start_date when item is due)
+    - unlock_offset_days INT (days from start_date when item becomes available)
+
+  playlist_item_dependencies:
+    - (item_id, depends_on_item_id) composite PK
+    - SELF-JOIN constraint: item_id != depends_on_item_id (prevents trivial cycles)
+    - Note: Circular dependency prevention is done at DB level via trigger
+      (see roadmap_hardening migration)
+
+  playlist_assignments:
+    - Linkage: pack_id + playlist_id + learner_user_id
+    - start_date DATE (assignment start)
+    - status → 'active' | 'paused' | 'completed' | 'cancelled'
+    - UNIQUE(playlist_id, learner_user_id) — one assignment per learner per playlist
+
+  playlist_item_progress:
+    - status → 'blocked' | 'available' | 'in_progress' | 'done' | 'skipped'
+    - started_at, completed_at timestamps
+    - Note: 'done' is the terminal state; 'skipped' allows bypass
+
+4. ITEM STATUS TRANSITIONS (ALLOWED PATHS)
+-------------------------------------------
+  blocked → available  (when all dependencies are done)
+  available → in_progress (user opens the item)
+  in_progress → done (user completes / marks complete)
+  in_progress → skipped (author can mark as skipped)
+  available → skipped
+
+  Note: Status transitions are enforced at application level;
+  a DB-level trigger for this is planned (see 19_Known_Gaps.txt).
+
+5. COMPUTED VIEW (view_playlist_item_state)
+--------------------------------------------
+  Defined in: 20260329000000_roadmap_playlists.sql
+  
+  Returns per (assignment, item):
+    - learner_user_id
+    - current_status (from playlist_item_progress)
+    - computed_due_date = start_date + due_offset_days
+    - computed_unlock_date = start_date + unlock_offset_days
+    - is_blocked_by_dependency: TRUE if any unfinished dependency exists
+
+  Usage: Learner roadmap view uses this to render items with correct state.
+
+6. RLS POLICIES (SUMMARY)
+--------------------------
+  playlists + playlist_items + playlist_item_dependencies:
+    SELECT: pack members (any role)
+    ALL: pack authors/admins
+
+  playlist_assignments:
+    SELECT: learner sees own; authors see all for their pack
+    ALL: authors/admins
+
+  playlist_item_progress:
+    ALL: learner manages own (WITH CHECK = own user_id)
+    SELECT: authors view all for their pack
+
+7. CIRCULAR DEPENDENCY PREVENTION
+------------------------------------
+  Migration: supabase/migrations/20260329000001_roadmap_hardening.sql
+  
+  A DB-level trigger fires on INSERT to playlist_item_dependencies.
+  It performs a recursive CTE to detect if the new dependency would
+  create a cycle. If a cycle is detected, the INSERT is rejected.
+  
+  The SELF-JOIN constraint (no_self_dependency) prevents item depending on itself.
+
+8. AUTHOR BUILDER (RoadmapBuilder.tsx)
+----------------------------------------
+  Route: /packs/:packId/roadmap/builder
+  Access: author/admin only
+
+  Allows:
+    - Create playlists per phase
+    - Add items (module, quiz, milestone, task, link)
+    - Set due_offset_days and unlock_offset_days
+    - Reorder items (sort_order)
+    - Assign playlists to learners
+
+9. LEARNER VIEW (PlanPage.tsx / RoadmapPage.tsx)
+--------------------------------------------------
+  Route: /packs/:packId/plan or /packs/:packId/roadmap
+  
+  Shows:
+    - All three phases (Day 1-30, Day 31-60, Day 61-90)
+    - Item status (blocked/available/in_progress/done)
+    - Computed due dates
+    - Link to module or external URL
+
+10. KEY INVARIANTS
+-------------------
+  - Circular dependencies are blocked at DB level (not just application level)
+  - Each learner has at most ONE assignment per playlist (UNIQUE constraint)
+  - Progress is ALWAYS scoped to a specific assignment_id (not global)
+  - Learners can only update their own progress rows (WITH CHECK enforced)
+
+11. HOW TO TEST
+----------------
+  SQL test scripts: supabase/qa/roadmap/ (if present; see known gaps)
+  
+  Manual flow:
+  1. Enable roadmap: UPDATE packs SET roadmap_enabled=true WHERE id=:packId
+  2. Create playlist phase 'day_1_30'
+  3. Add items with due_offset_days = 7
+  4. Assign playlist to learner
+  5. Verify view_playlist_item_state shows correct status
+  6. Try inserting circular dependency → verify DB rejects it
+
+================================================================================
+END OF 15_Roadmaps_Playlists_30_60_90.txt
+================================================================================

@@ -1,0 +1,286 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 05_Edge_Functions_Index.txt
+Purpose: Index and summary of all Supabase Edge Functions including their
+         endpoints, request/response shapes, authentication requirements,
+         and key security properties.
+Audience: Backend Engineers, Security, DevOps
+Last Updated: 2026-03-25
+Related Code Paths:
+  - supabase/functions/*/index.ts
+================================================================================
+
+1. FUNCTION INVENTORY TABLE
+-----------------------------
+Function Name            | Auth       | Calls Service Role | Purpose
+-------------------------|------------|--------------------|----------------------------------
+ai-task-router           | JWT (user) | YES                | AI generation + grounding pipeline
+retrieve-spans           | JWT (user) | YES                | Evidence retrieval (hybrid search)
+ingest-source            | Internal   | YES                | Ingestion dispatcher
+ingest-confluence        | Internal   | YES                | Confluence connector
+ingest-notion            | Internal   | YES                | Notion connector
+ingest-jira              | Internal   | YES                | Jira connector
+ingest-slack             | Internal   | YES                | Slack connector
+ingest-url               | Internal   | YES                | URL/HTTP connector
+ingest-google-drive      | Internal   | YES                | Google Drive connector
+ingest-sharepoint        | Internal   | YES                | SharePoint connector
+ingest-figma             | Internal   | YES                | Figma connector
+ingest-loom              | Internal   | YES                | Loom video connector
+ingest-openapi           | Internal   | YES                | OpenAPI spec connector
+ingest-postman           | Internal   | YES                | Postman collection connector
+ingest-pagerduty         | Internal   | YES                | PagerDuty connector
+ingest-linear            | Internal   | YES                | Linear connector
+purge-source             | JWT (user) | YES                | Per-source data purge
+lifecycle-retention-job  | CRON token | YES                | Automated retention cleanup
+rollup-pack-quality-daily| CRON/Admin | YES                | Daily quality rollup aggregation
+github-webhook           | HMAC sig   | YES                | GitHub push events → reindex trigger
+check-staleness          | Service    | YES                | Checks for stale content in packs
+auto-remediate-module    | Service    | YES                | Auto-regenerates stale module content
+reindex-orgs             | Service    | YES                | Bulk reindex for org (webhook trigger)
+list-my-packs            | JWT (user) | YES                | Lists packs accessible to a user
+search-content           | JWT (user) | NO                 | Content search across pack
+configure-source         | JWT (user) | YES                | Configure connector settings
+send-email               | JWT (user) | NO                 | Transactional email (JWT required)
+send-slack-message       | Service    | NO                 | Internal slack notification
+sync-feedback-to-langfuse| Service    | YES                | Sync user feedback to Langfuse
+module-chat              | JWT (user) | YES                | Module-scoped chat (thin wrapper)
+google-oauth-callback    | Public     | YES                | Google OAuth redirect handler
+sync-pack-docs           | JWT (auth) | YES                | Stitches chunks into structured docs
+rocketboard-mcp          | JWT (user) | YES                | MCP Server (13 tools/resource tools)
+
+2. CORE FUNCTION DETAILS
+--------------------------
+
+2.1 ai-task-router
+  Path: supabase/functions/ai-task-router/index.ts
+  Method: POST
+  Auth: JWT Bearer (user session token)
+  Rate Limit: 30 requests per 60 seconds per user
+  Request: Task envelope (see 03_Frontend_App.txt section 3)
+  Response:
+    {
+      display_response: string,   // HTML with [S#] badge spans
+      source_map: [{badge, chunk_id, path, start, end}],
+      request_id: string,
+      trace_id: string,
+      latency_ms: number,
+      grounding_gate_passed: boolean,
+      grounding_gate_reason: string
+    }
+  On Refuse:
+    {
+      error: "insufficient_evidence",
+      grounding_gate_reason: string,
+      user_message: string
+    }
+  Sub-modules:
+    - grounding-gate.ts (evaluateGroundingGate, computeGroundingScore, getRetryDirective)
+    - detective-retrieval.ts (runDetectiveRetrieval)
+    - reranker.ts (batchRerankWithLLM)
+    - verifier.ts (verifyGroundedness, verifyClaims)
+    - utils/citation-mapper.ts (canonicalizeCitations)
+    - utils/snippet-resolver.ts (resolveSnippets)
+  Graph v2 Integration:
+    - Detective Mode: Supports multi-hop (Hop 1: Definitions; Hop 2: References).
+    - Uses symbol_definitions and symbol_references tables.
+
+2.2 retrieve-spans
+  Path: supabase/functions/retrieve-spans/index.ts
+  Method: POST
+  Auth: JWT Bearer (user session token)
+  CORS: Origin allowlist (ALLOWED_ORIGINS env var)
+  Request:
+    { pack_id: string, query: string, max_spans?: number,
+      module_key?: string, track_key?: string }
+  Response:
+    { spans: EvidenceSpan[], trace_id: string, latency_ms: number }
+  Caps:
+    - query: max 500 chars
+    - max_spans: clamped to [1, 50], defaults to 10
+    - match_threshold: optional float (0.0 to 1.0), defaults to 0.5
+  Dependencies:
+    - hybrid_search_v2 RPC
+    - OpenAI text-embedding-3-small (for vector part)
+    - Falls back to keyword-only if embedding fails
+  Graph v2 Integration:
+    - Supports `retrieval_method: 'graph'` when symbol lookup is triggered.
+    - Integrated with find_definitions_v1 and find_references_v1 RPCs.
+
+2.3 ingest-source (Dispatcher)
+  Path: supabase/functions/ingest-source/index.ts
+  Method: POST
+  Auth: Internal (X-Rocketboard-Internal) or Service Role (deprecated)
+  Request:
+    { pack_id, source_id, source_type, source_uri?, document_content?,
+      label?, source_config?, org_id }
+  Heartbeats: Every 30s during long runs; keeps job status 'processing'.
+  Cancellation: Checks if status='cancelled' every 50 chunks; halts if true.
+  source_type routing:
+    - github_repo → inline processing in ingest-source
+    - document    → inline processing in ingest-source
+    - confluence, notion, jira, slack, google_drive, sharepoint,
+      figma, loom_video, openapi_spec, postman_collection,
+      pagerduty, linear → forwarded to ingest-{source_type}
+  Response:
+    { success: bool, job_id: string, chunks: number, redactions: number }
+  On failure: updates ingestion_jobs to failed + cleans up partial chunks
+
+2.4 sync-pack-docs
+  Path: supabase/functions/sync-pack-docs/index.ts
+  Method: POST
+  Auth: JWT Bearer (must be 'author' on the pack)
+  Request: { pack_id: string, source_id: string }
+  Process:
+    1. Fetches `knowledge_chunks` for the source.
+    2. Stitches snippets into full documents (`content_plain`).
+    3. Redacts secrets via `secret-patterns.ts`.
+    4. Parses blocks (headings, code, mermaid) into `pack_doc_blocks`.
+    5. Upserts to `pack_docs` and `pack_doc_blocks`.
+  Audit: Writes 'sync_docs' to `lifecycle_audit_events`.
+
+2.5 rocketboard-mcp
+  Path: supabase/functions/rocketboard-mcp/index.ts
+  Protocol: MCP (Model Context Protocol) over Streamable HTTP.
+  Auth: JWT Bearer + Pack membership check.
+  Tools: search_kb, explain_evidence, get_conventions, get_tech_doc, report_gap, find_references, etc.
+  Security: Output redaction and 50k char caps on all textual results.
+  See 21_MCP_Tool_Contracts.txt for the full tool registry.
+
+2.4 purge-source
+  Path: supabase/functions/purge-source/index.ts
+  Method: POST
+  Auth: JWT Bearer (must be pack author/admin)
+  Request:
+    { pack_id: string, source_id: string, dry_run?: boolean }
+  Response (dry_run):
+    { dry_run: true, would_delete: { knowledge_chunks: N, ingestion_jobs: N } }
+  Response (execute):
+    { success: true, deleted: { knowledge_chunks: N, ingestion_jobs: N },
+      audit_event_id: string }
+  Audit: Writes 'purge_source' to `lifecycle_audit_events` (always)
+  Authorization: Checks pack_members.role = 'author' | 'admin' for the pack
+
+2.7 lifecycle-retention-job
+  Path: supabase/functions/lifecycle-retention-job/index.ts
+  Method: POST
+  Auth: CRON_AUTH_TOKEN bearer token
+  Purpose: Runs on schedule; cleans up rag_metrics, ingestion_jobs, and
+           ai_audit_events per per-pack retention policies.
+  Request: { } (no body needed; auth via header)
+  Response: { success: true, processed_packs: N, errors: [] }
+  Writes to: lifecycle_audit_events (one row per pack cleaned)
+  Skips packs with: legal_hold=true
+  Batch size: 1000 rows per delete to avoid timeouts
+
+  Response: { success: true, rows_upserted: N }
+
+2.8 rollup-pack-quality-daily
+  Path: supabase/functions/rollup-pack-quality-daily/index.ts
+  Method: POST
+  Auth: CRON or admin bearer token
+  Purpose: Aggregates rag_metrics into pack_quality_daily table for fast 7/30/90d charts.
+  Request: { target_date?: string } (defaults to yesterday)
+  Response: { success: true, rows_upserted: N }
+
+  Purpose: Receives push events from GitHub and triggers reindex for updated files.
+
+2.9 github-webhook
+  Path: supabase/functions/github-webhook/index.ts
+  Method: POST
+  Auth: HMAC SHA-256 signature (X-Hub-Signature-256 header)
+  Purpose: Receives push events from GitHub and triggers reindex for updated files.
+
+  Purpose: Used by VS Code extension pack picker
+
+2.10 list-my-packs
+  Path: supabase/functions/list-my-packs/index.ts
+  Method: POST or GET
+  Auth: JWT Bearer (user session token)
+  Response:
+    { packs: [{ id, title, description, pack_id, org_id, role }] }
+  Purpose: Used by VS Code extension pack picker
+
+3. SHARED LIBRARIES (supabase/functions/_shared/)
+---------------------------------------------------
+
+  _shared/telemetry.ts
+    - createTrace(opts) → TraceBuilder
+    - shouldTrace() → boolean (based on LANGFUSE_SAMPLE_RATE)
+    - TraceBuilder.startSpan(), .end(), .error(), .flush()
+    - Falls back to console.log if LANGFUSE keys not set
+
+  _shared/secret-patterns.ts
+    - SECRET_PATTERNS: SecretPattern[] (canonical pattern list)
+    - detectSecrets(text) → SecretMatch[]
+    - redactText(text) → RedactionResult
+    - assessChunkRedaction(rawContent) → ChunkRedactionAssessment
+    - Action outcomes: 'clean' | 'redact_and_index' | 'exclude'
+
+  _shared/external-url-policy.ts
+    - parseAndValidateExternalUrl(input, customPolicy?) → string (throws on violation)
+    - DEFAULT_POLICY: https-only, no private IPs, ports [80, 443]
+
+  _shared/ast-chunker.ts
+    - astChunk(content, filepath) → AstChunk[]
+    - Produces semantically meaningful code units (functions, classes, etc.)
+
+  _shared/smart-chunker.ts
+    - smartChunk(content, opts) → Chunk[]  (heading-aware, for docs/markdown)
+
+  _shared/content-normalizers.ts
+    - normalizeMarkdown(), normalizeText(), etc.
+
+  _shared/hash-utils.ts
+    - computeContentHash(content) → SHA256 hex string
+    - Used for deduplication/embedding reuse
+
+  _shared/embedding-reuse.ts
+    - processEmbeddingsWithReuse(supabase, pack_id, source_id, chunks, apiKey)
+    - Checks knowledge_chunks for matching content_hash
+    - Reuses embedding if match found, generates new otherwise
+
+  _shared/ingestion-guards.ts
+    - validateIngestion(supabase, pack_id, source_id)
+      → checks cooldown (prevents re-ingest within X minutes)
+      → checks concurrency (prevents simultaneous ingest of same source)
+    - checkPackChunkCap(supabase, pack_id)
+      → prevents a pack from accumulating too many chunks
+    - getRunCap() → number (max new chunks per single ingest run)
+
+  _shared/credentials.ts
+    - getSourceCredential(supabase, source_id, key_name) → string | null
+    - Retrieves credentials from Supabase Vault RPCs
+    - Never stores or returns raw credentials to browser
+
+  _shared/authz.ts
+    - requireUser(req) → { userId } (verifies JWT session)
+    - requireInternal(req) → { success } (verifies X-Rocketboard-Internal)
+    - getBearerToken(req) → string
+
+  _shared/cors.ts
+    - buildCorsHeaders(req, allowedOrigins) → Headers
+    - handleCorsPreflight(req, allowedOrigins) → Response | null
+    - parseAllowedOrigins() → string[]
+
+4. SECURITY INVARIANTS
+------------------------
+  - No function ever returns decrypted credentials to the client.
+  - SQL injection is prevented by parameterized RPC calls (no string interpolation).
+  - CORS for ai-task-router: allowlist-based Origin verification via _shared/cors.ts.
+    Note: retrieve-spans and others use the same shared logic. Never returns "*".
+  - Rate limiting is in-memory in Deno isolate; may reset on cold start. For
+    hard rate limiting at scale, a distributed store (Redis) would be needed.
+  - GitHub webhook signature verified before processing push events.
+
+5. FAILURE MODES
+-----------------
+  ai-task-router returns 500: Check Langfuse traces, router logs, verify AI provider key.
+  retrieve-spans returns empty spans: Check ingestion health; embedding may have failed.
+  ingest-source returns 409 Conflict: Source is on cooldown or already being ingested.
+  ingest-source returns 413 (cap exceeded): Pack hit chunk cap; purge old sources first.
+  purge-source returns 403: User is not an author/admin for this pack.
+  lifecycle-retention-job returning errors: Check CRON_AUTH_TOKEN, service role key.
+
+================================================================================
+END OF 05_Edge_Functions_Index.txt
+================================================================================

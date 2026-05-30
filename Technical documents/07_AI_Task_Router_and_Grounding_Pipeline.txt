@@ -1,0 +1,224 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 07_AI_Task_Router_and_Grounding_Pipeline.txt
+Purpose: Complete specification of the ai-task-router edge function, including
+         the agentic review loop, verification pipeline, claim stripping,
+         snippet hydration, citation canonicalization, and post-processing.
+Audience: Backend Engineers, AI/ML Engineers
+Last Updated: 2026-03-19
+Related Code Paths:
+  - supabase/functions/ai-task-router/index.ts (main, 2973 lines)
+  - supabase/functions/ai-task-router/grounding-gate.ts
+  - supabase/functions/ai-task-router/reranker.ts
+  - supabase/functions/ai-task-router/verifier.ts
+  - supabase/functions/ai-task-router/utils/citation-mapper.ts
+  - supabase/functions/ai-task-router/utils/snippet-resolver.ts
+  - supabase/functions/ai-task-router/detective-retrieval.ts
+================================================================================
+
+1. INPUT VALIDATION AND BOUNDS
+--------------------------------
+Functions: sanitizeInputs(), redactSpans()
+
+HARD LIMITS (throws 400 if exceeded):
+  - author_instruction: max 2000 characters (hard reject)
+
+SOFT LIMITS (truncate silently + add warning):
+  - evidence_spans: max 50 (slice to 50 if more)
+  - total evidence text: max 100,000 characters (oldest spans dropped)
+  - conversation messages: max 20 (oldest messages dropped)
+
+Secret redaction (redactSpans()):
+  - Runs shared redactText() on EACH span's text before constructing prompt
+  - If wasRedacted is true: logs span_id + path to console.warn
+  - Warning message added to router response metadata
+
+Rate limiting:
+  - Per-user in-memory map (rateLimitMap)
+  - 30 requests per 60-second window per user ID
+  - Returns 429 with message "Rate limit exceeded; please wait."
+  - Map cleanup runs every 120 seconds (stale entries removed)
+
+2. GROUNDING POLICY RESOLUTION
+--------------------------------
+Function: resolveGroundingPolicy(taskType, pack)
+
+Reading order (highest priority first):
+  1. pack.grounding_policy (from packs.grounding_policy JSONB column)
+  2. Environment variables (GROUNDING_MIN_SCORE, STRIP_RATE_MAX, etc.)
+  3. Hard defaults in code
+
+Default policy:
+  min_score: 0.80
+  max_strip_rate: 0.20
+  min_citations: 1
+  max_unverified_claims: 0
+  mode: 'retry_then_refuse'
+  applies_to_tasks: 'chat,global_chat,generate_module,refine_module,generate_quiz'
+
+If taskType is NOT in applies_to_tasks list → mode is forced to 'off' by default.
+Note: generate_glossary, generate_paths, module_planner etc. use a relaxed
+match_threshold (0.3) to ensure better recall for supporting content,
+even if the formal grounding gate is off.
+
+3. RERANKING
+------------
+Function: batchRerankWithLLM(queryText, spans)
+  Location: ai-task-router/reranker.ts
+  Purpose: Re-sort evidence spans by relevance to the query using an LLM call.
+  Input: queryText string + spans array
+  Output: reranked subset (filtered by relevance score threshold)
+  Used at:
+    1. After initial retrieval (pre-generation)
+    2. Inside detective loop (before symbol extraction)
+    3. After detective loop expanded spans (final rerank)
+
+4. AI GENERATION (callWithAgenticReview)
+------------------------------------------
+  This is the central agentic generation function.
+  Max attempts: 3 (configurable)
+
+  For each attempt:
+  a. Build system prompt:
+     - Grounding rules block (mandatory citation format: [SOURCE: path:start-end])
+     - Evidence spans block (fenced as [EVIDENCE] blocks)
+     - Conversation history
+     - Task-specific instructions (module length, quiz format, etc.)
+     
+  b. Call AI provider:
+     - Primary: Uses LOVABLE_API_KEY (OpenAI-compatible endpoint)
+     - Model: gpt-4o (or as configured by pack/env)
+     - Format: Chat Completions API
+
+  c. enforceNoDirectCode(response):
+     - Scans for code fences (` ``` `)
+     - Rejects any that don't have '// PSEUDOCODE', '# PSEUDOCODE', or '// SOURCE:' as first line
+     - Throws UNAUTHORIZED_CODE_BLOCK if violation found
+
+  d. verifyClaims(response, spans):
+     - Identifies technical claims in the response
+     - Strips claims that don't have a supporting [SOURCE: path:start-end] citation
+     - Returns: { stripped_text, claims_total, claims_stripped, strip_rate }
+
+  e. resolveSnippets(stripped_text, spans):
+     - Finds [SNIPPET: filepath:start-end | lang=xxx] placeholder tags
+     - Replaces each with the actual content from the matching span
+     - Adds '// SOURCE: filepath:start-end' header to each code block
+     - Snippets without a nearby canonical citation (within 300 chars) are not hydrated
+
+  f. canonicalizeCitations(text, spans):
+     - Finds [SOURCE: path:start-end] markers
+     - Creates source_map: [{badge: 'S1', chunk_id, path, start, end}]
+     - Replaces [SOURCE: ...] markers with [S1], [S2], etc. in display_response
+     - Deduplicates: same path+range gets same badge
+
+  g. evaluateGroundingGate(metrics, policy, attempt, maxAttempts):
+     - Computes grounding score (see grounding-gate section)
+     - Returns: { ok, should_retry, reason_code, user_message }
+     - If ok: proceed to post-flight
+     - If should_retry: append getRetryDirective() to prompt and loop
+     - If refuse: return insufficient_evidence error
+
+5. VERIFICATION PIPELINE ORDER (CRITICAL — DO NOT REORDER)
+------------------------------------------------------------
+  Step 1: enforceNoDirectCode()    — MUST be before anything else
+  Step 2: verifyClaims()           — strips ungrounded claims
+  Step 3: resolveSnippets()        — hydrates [SNIPPET] tags from evidence
+  Step 4: canonicalizeCitations()  — assigns badges + builds source_map
+  Step 5: evaluateGroundingGate()  — uses strip_rate + citations_found
+
+  Reordering this pipeline WILL break citation accuracy or snippet hydration.
+
+6. POST-FLIGHT (AFTER RESPONSE FINALIZED)
+-------------------------------------------
+  These run non-blocking (Promise.all with catch, never throws):
+
+  recordRagMetrics(supabase, data):
+    INSERT INTO rag_metrics (...)
+    Captures: request_id, task_type, retrieval metrics, generation metrics,
+    grounding gate outcome, grounding_gate_passed, strip rate, citations found, latency.
+
+  recordAiAudit(supabase, data):
+    Step C: Hop 1 RPC (find_definitions_v1)
+    Params: (p_org_id, p_pack_id, symbols[], p_match_count=15)
+    Returns: chunks where entity_name ILIKE ANY(symbols) OR exported_names && symbols
+    
+    Alternatively, Graph v2 uses: find_references_v1(p_pack_id, p_symbol)
+    INSERT INTO ai_audit_events (...)
+    Captures: user_id, pack_id, org_id, task_type, request_id, trace_id,
+    evidence_manifest (full citation → chunk_id mapping), 
+    prompt_hash (SHA256), response_hash (SHA256),
+    prompt_preview (first 200 chars), response_preview (first 200 chars)
+    
+  trace.flush():
+    Sends trace to Langfuse if enabled.
+
+7. TASK HANDLERS
+-----------------
+  handleChat(envelope, supabase, trace, options):
+    - Pack-scoped chat about a specific module
+    - Uses evidence spans from envelope.retrieval.evidence_spans
+    - Optional detective expansion if envelope.retrieval.detective_mode = true
+    - Calls callWithAgenticReview with max 3 attempts
+
+  handleGlobalChat(envelope, supabase, trace, options):
+    - Pack-wide chat (landing page, no module context)
+    - Same flow as handleChat but with global context
+
+  handleModulePlanner(envelope, supabase, trace, options):
+    - Generates the list of learning modules for a pack
+    - Grounding gate: off (generate_module_planner not in default applies_to_tasks)
+
+  handleGenerateModule(envelope, supabase, trace, options):
+    - Generates full module content (sections, code examples, key takeaways)
+    - Grounding gate: on (if generate_module is in applies_to_tasks)
+
+  handleGenerateQuiz(envelope, supabase, trace, options):
+    - Generates quiz questions for a module
+    - Up to max_quiz_questions questions (default from limits)
+
+  handleGenerateGlossary(envelope, supabase, trace, options):
+    - Generates glossary terms for a pack
+    
+  handleGeneratePaths(envelope, supabase, trace, options):
+    - Generates onboarding path recommendations
+
+8. CANONICAL CITATION FORMAT (REQUIRED)
+-----------------------------------------
+  In AI response:    [SOURCE: path/to/file.ts:10-45]
+  In display:        [S1] (badge rendered by CitationBadge.tsx)
+  In source_map:     [{badge:'S1', chunk_id:'uuid', path:'...', start:10, end:45}]
+  In snippets:       [SNIPPET: path/to/file.ts:10-45 | lang=typescript]
+  After hydration:   ```typescript\n// SOURCE: path:10-45\n<code content>\n```
+
+9. KEY INVARIANTS
+------------------
+  - Snippet hydration requires a nearby [SOURCE:] citation. Orphaned snippets
+    (no nearby citation) are NOT hydrated to prevent ungrounded code display.
+  - Strip rate tracks how many claims were removed. High strip rates
+    (> 0.20) trigger route retry or refusal.
+  - recordAiAudit always runs after recordRagMetrics (both non-blocking).
+  - SHA256 hashes of prompts/responses use crypto.subtle.digest (Deno standard).
+  - No prompt content is ever logged to the console (only hashes and previews).
+
+10. FAILURE MODES
+------------------
+  Issue: 429 Too Many Requests
+  Cause: User exceeded 30 req/min
+  Fix: Client should wait 60 seconds
+
+  Issue: UNAUTHORIZED_CODE_BLOCK error
+  Cause: AI returned raw code without PSEUDOCODE or SOURCE markers
+  Fix: Adjust system prompt; this is a model grounding failure
+
+  Issue: insufficient_evidence in response
+  Cause: All 3 attempts failed grounding gate
+  Fix: Check ingestion health; may need more relevant content ingested
+
+  Issue: Missing [SOURCE:] badges in display_response
+  Cause: AI did not follow citation format; verifyClaims stripped the claims
+  Fix: Retry directive will be added automatically; check strip_rate in rag_metrics
+
+================================================================================
+END OF 07_AI_Task_Router_and_Grounding_Pipeline.txt
+================================================================================

@@ -1,0 +1,236 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 18_Operational_Runbooks.txt
+Purpose: Step-by-step operational runbooks for common tasks including deploying
+         a new pack, debugging grounding failures, recovering from ingestion
+         outages, and running lifecycle cleanup.
+Audience: Engineers, DevOps, SRE
+Last Updated: 2026-04-24
+================================================================================
+
+RUNBOOK 01: DEPLOYING A NEW PACK (End-to-End)
+----------------------------------------------
+Goal: Set up a new pack, connect a GitHub repo, ingest content, and have AI chat working.
+
+Prerequisites:
+  - Supabase project running with all migrations applied
+  - OPENAI_API_KEY or LOVABLE_API_KEY env var set on edge functions
+  - Author user has an account
+
+Steps:
+  1. Create org (if first-time):
+     INSERT INTO orgs (name) VALUES ('My Org') RETURNING id;
+     INSERT INTO org_members (org_id, user_id, role) VALUES (org_id, auth_uid, 'admin');
+
+  2. Create pack:
+     INSERT INTO packs (org_id, title, description, created_by) 
+     VALUES (org_id, 'My Service', 'Microservice onboarding', auth_uid)
+     RETURNING id;
+
+  3. Add author to pack:
+     INSERT INTO pack_members (pack_id, user_id, role)
+     VALUES (pack_id, auth_uid, 'author');
+
+  4. Connect GitHub source:
+     POST /functions/v1/ingest-source
+     Body: { pack_id, source_id, source_type: 'github_repo',
+             source_uri: 'https://github.com/org/repo', org_id }
+     Note: Store GitHub PAT via storeSourceCredential() before ingesting
+           if the repo is private.
+
+  5. Monitor ingestion:
+     SELECT * FROM ingestion_jobs WHERE pack_id=? ORDER BY started_at DESC LIMIT 5;
+     Wait for status='completed'.
+
+  6. Verify chunks:
+     SELECT COUNT(*), COUNT(*) FILTER (WHERE is_redacted=true) as redacted
+     FROM knowledge_chunks WHERE pack_id=?;
+
+  7. Test retrieval:
+     POST /functions/v1/retrieve-spans
+     Body: { pack_id: '...', query: 'authentication handler' }
+     Verify spans returned with relevant file paths.
+
+  8. Test AI chat:
+     POST /functions/v1/ai-task-router
+     With a minimal chat envelope (see envelope-builder.ts buildChatEnvelope)
+     Verify display_response contains [S1] badges.
+
+  9. Invite learners:
+     INSERT INTO pack_members (pack_id, user_id, role) VALUES (pack_id, uid, 'learner');
+
+RUNBOOK 02: DEBUGGING GROUNDING FAILURES
+------------------------------------------
+Goal: Diagnose why AI responses are being refused or have high strip rates.
+
+Step 1: Check Trust Console
+  Navigate to /packs/:packId/trust
+  Check: Pass Rate, Refusal Rate, Avg Strip Rate
+  If pass_rate < 80%: proceed to Step 2
+
+Step 2: Review recent failed requests
+  In "Latest Requests" table, filter by Refused
+  Click a request to open drilldown
+  Note: grounding_gate_reason (e.g., 'no_citations', 'high_strip_rate')
+
+Step 3: SQL diagnosis
+  SELECT request_id, task_type, citations_found, strip_rate,
+         grounding_gate_passed, grounding_gate_reason, attempts
+  FROM rag_metrics
+  WHERE pack_id=? AND grounding_gate_passed=false
+  ORDER BY created_at DESC LIMIT 20;
+
+Step 4: Check evidence quality
+  SELECT COUNT(*), AVG(LENGTH(content)) as avg_chunk_size
+  FROM knowledge_chunks
+  WHERE pack_id=? AND is_redacted=false;
+  
+  If count=0 → run ingestion
+  If avg_chunk_size < 200 → chunks may be too small; check AST chunker
+
+RUNBOOK 03: RECOVERING FROM INGESTION FAILURE
+----------------------------------------------
+Goal: Clean up a stuck or failed ingestion job and restart cleanly.
+
+Step 1: Find stuck jobs
+  SELECT id, pack_id, source_id, status, started_at, last_heartbeat_at
+  FROM ingestion_jobs
+  WHERE status='processing' 
+    AND (last_heartbeat_at < NOW() - INTERVAL '2 minutes' 
+         OR (last_heartbeat_at IS NULL AND started_at < NOW() - INTERVAL '30 minutes'));
+
+Step 2: Check for partial chunks
+  SELECT COUNT(*) FROM knowledge_chunks WHERE ingestion_job_id=:job_id;
+
+Step 3: Manual cleanup (if needed)
+  BEGIN;
+  DELETE FROM knowledge_chunks WHERE ingestion_job_id=:job_id;
+  UPDATE ingestion_jobs SET status='failed', error_message='Manual cleanup'
+  WHERE id=:job_id;
+  COMMIT;
+
+RUNBOOK 03b: CANCELLING A RUNNING JOB
+------------------------------------
+Goal: Gracefully stop an ingestion job that is taking too long.
+
+Step 1: Update job status to 'cancelled'
+  UPDATE ingestion_jobs SET status='cancelled' WHERE id=:job_id;
+  
+Step 2: Verify stop
+  Monitor `processed_chunks` for :job_id. It should stop incrementing 
+  within 50 chunks. Chunks for this job_id will be auto-deleted by the 
+  ingestion loop before exiting.
+
+Step 3: Manual cleanup (optional)
+  Same as RUNBOOK 03 Step 3 if the auto-cleanup fails.
+
+Step 4: Restart ingestion
+  POST /functions/v1/ingest-source
+  Body: { pack_id, source_id, source_type, source_uri, org_id }
+  Note: May need to wait for cooldown period to expire first.
+
+RUNBOOK 04: RUNNING LIFECYCLE RETENTION CLEANUP
+-------------------------------------------------
+Goal: Trigger retention cleanup for all packs.
+
+Step 1: Check what would be deleted (dry estimate)
+  SELECT pack_id, 
+    (SELECT COUNT(*) FROM rag_metrics WHERE pack_id=p.id AND 
+     created_at < NOW() - INTERVAL '90 days') as old_rag_metrics
+  FROM packs p;
+
+Step 2: Run cleanup (if using CRON endpoint)
+  POST {SUPABASE_URL}/functions/v1/lifecycle-retention-job
+  Headers: Authorization: Bearer {CRON_AUTH_TOKEN}
+  Body: {}
+
+Step 3: Verify audit events written
+  SELECT pack_id, rows_deleted, created_at 
+  FROM lifecycle_audit_events
+  WHERE action='retention_cleanup'
+  ORDER BY created_at DESC LIMIT 10;
+
+Step 4: Check for legal_hold blocks
+  SELECT pack_id, legal_hold FROM pack_lifecycle_policies WHERE legal_hold=true;
+  These packs were skipped intentionally.
+
+RUNBOOK 05: FORCE REINDEX A PACK
+----------------------------------
+Goal: Re-ingest a pack's GitHub source after repo has changed.
+
+Step 1: Get current ingestion jobs
+  SELECT * FROM ingestion_jobs WHERE pack_id=? ORDER BY started_at DESC LIMIT 3;
+
+Step 2: Wait for cooldown (or manually reset it)
+  -- Check cooldown guard logic in _shared/ingestion-guards.ts
+  -- Cooldown period is X minutes from last job's completed_at
+
+Step 3: Trigger reindex
+  Same as RUNBOOK 01 Step 4 — POST ingest-source
+  Or via github-webhook if push event triggers it automatically.
+
+Step 4: Verify new generation
+  SELECT generation_id, COUNT(*) FROM knowledge_chunks 
+  WHERE pack_id=? GROUP BY generation_id ORDER BY MAX(created_at) DESC;
+  
+  Verify new generation_id has highest chunk count.
+
+Step 5: Update active generation (if needed)
+  UPDATE pack_active_generation SET active_generation_id=:new_gen_id
+  WHERE pack_id=?;
+
+RUNBOOK 06: GRANTING VAULT CREDENTIALS FOR A CONNECTOR
+--------------------------------------------------------
+Goal: Store a connector API token in Vault so the connector can fetch it.
+
+Step 1: Get source_id for the connector
+  SELECT id FROM pack_sources WHERE pack_id=? AND source_type=?;
+
+Step 2: Store credential via Edge Function (preferred)
+  POST /functions/v1/configure-source
+  Body: { source_id, key_name: 'api_token', secret_value: '...' }
+  This calls storeSourceCredential() internally.
+
+Alternative (direct RPC):
+  SELECT vault.create_secret(:secret_value, 'pack_source_' || :source_id || '_api_token');
+  -- Store returned vault_id in pack_sources.metadata.vault_ids.api_token
+
+Step 3: Verify
+  -- The connector will call getSourceCredential(supabase, source_id, 'api_token')
+  -- and receive the decrypted value. Test by triggering ingestion.
+
+RUNBOOK 07: SYNCING DOCS-IN-PLATFORM
+-------------------------------------
+Goal: Push changes from technical documents/ in repo to the UI.
+1. Run `ingest-source` for the GitHub pack source to updated chunks.
+2. Trigger `sync-pack-docs` via the Review Dashboard or CLI.
+3. Verify new blocks in `pack_doc_blocks`:
+   SELECT * FROM pack_doc_blocks WHERE doc_id IN (SELECT id FROM pack_docs WHERE pack_id=?);
+4. Set doc status to 'published' once verified in UI.
+
+RUNBOOK 08: VERIFYING GRAPH INTEGRITY (Graph v2)
+-----------------------------------------------
+Goal: Ensure `find_references` works for a specific symbol.
+1. Find symbol in definitions: `SELECT * FROM symbol_definitions WHERE symbol='foo' AND pack_id=?`.
+2. Check references Table: `SELECT * FROM symbol_references WHERE symbol='foo' AND pack_id=?`.
+3. If empty, verify `symbol-extractor.ts` regex isn't blocking the name in shared lib.
+4. Manually trigger `find_references_v1` RPC to verify BLEND logic.
+
+RUNBOOK 09: RESOLVING MISSING SECRETS & ENV WARNINGS
+------------------------------------------------------
+Goal: Address production log warnings concerning missing required secrets.
+1. Identify the warning in Supabase Edge Function logs. 
+   Warnings are generated safely via `warnIfMissingEnv()` which rate-limits 
+   its output (max 1 log per minute) and NEVER logs key values or partial keys.
+   Format: `[ENV WARNING] Missing required environment variable: GITHUB_WEBHOOK_SECRET`
+2. Consult `docs/ops/required-secrets.md` for the exact implications of the missing key.
+3. Determine if the missing key impacts the current workflow:
+   - `ROCKETBOARD_INTERNAL_SECRET`: Internal routing will fallback to the overly 
+     permissive `SUPABASE_SERVICE_ROLE_KEY`.
+   - `GITHUB_WEBHOOK_SECRET`: If `ENVIRONMENT="production"`, webhooks will fail with 401.
+4. Set the missing variable in the Supabase Dashboard (Settings -> Edge Functions -> Secrets)
+   or local `.env.local` depending on the environment.
+
+================================================================================
+END OF 18_Operational_Runbooks.txt
+================================================================================

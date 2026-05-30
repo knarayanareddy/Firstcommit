@@ -1,0 +1,222 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 09_Grounding_Gate_SLO_and_Refusal_Behavior.txt
+Purpose: Complete specification of the Grounding SLO Hard Gate including
+         policy resolution, scoring, retry logic, and refusal behavior.
+Audience: Backend Engineers, AI/ML Engineers, QA
+Last Updated: 2026-03-19
+Related Code Paths:
+  - supabase/functions/ai-task-router/grounding-gate.ts
+  - supabase/functions/ai-task-router/index.ts (resolveGroundingPolicy, callWithAgenticReview)
+================================================================================
+
+1. PURPOSE
+-----------
+The Grounding Hard Gate is a mandatory quality checkpoint that runs after each
+AI generation attempt. It enforces a Service Level Objective (SLO) on grounding
+quality to prevent hallucinations from reaching users.
+
+Core principle: "No evidence → no answer. Weak grounding → retry or refuse."
+
+2. TYPES AND INTERFACES
+------------------------
+
+GroundingAttemptMetrics:
+  {
+    grounding_score?: number,     // 0.0-1.0 (computed if not provided)
+    strip_rate: number,           // 0.0-1.0 (claims_stripped / claims_total)
+    claims_total: number,
+    claims_stripped: number,
+    citations_found: number,      // count of [S#] badges in final response
+    citations_verified?: number,  // count of unique valid badges
+    snippets_resolved: number,    // count of hydrated [SNIPPET] tags
+    evidence_count: number,       // number of evidence spans provided
+    source_map?: any[],           // [{badge, chunk_id, path, start, end}]
+    warnings?: string[]           // redaction warnings, etc.
+  }
+
+GroundingPolicy:
+  {
+    min_score: number,             // default: 0.80
+    max_strip_rate: number,        // default: 0.20
+    min_citations: number,         // default: 1
+    max_unverified_claims: number, // default: 0
+    mode: 'off'|'retry_then_refuse'|'refuse'|'retry_only',
+    applies_to_tasks: string[]     // CSV parsed list
+  }
+
+GroundingDecision:
+  {
+    ok: boolean,
+    should_retry: boolean,
+    reason_code: 'ok'|'low_grounding'|'high_strip_rate'|'no_citations'|
+                 'no_evidence'|'too_many_unverified'|'policy_refuse',
+    user_message?: string   // only set when refusing
+  }
+
+3. GROUNDING SCORE COMPUTATION (computeGroundingScore)
+-------------------------------------------------------
+  Input: metrics, policy
+  Output: float [0.0, 1.0]
+
+  base = 1.0
+
+  Penalty 1 (strip rate — heavy weight):
+    base -= min(1.0, strip_rate * 1.5)
+    A 20% strip rate reduces score by 30%.
+    A 67%+ strip rate alone drives score to 0.
+
+  Penalty 2 (missing citations):
+    citation_shortfall = max(0, min_citations - citations_found)
+    base -= min(1.0, citation_shortfall * 0.2)
+    Each missing required citation reduces score by 0.2.
+
+  Penalty 3 (no snippets when evidence > 0 and claims > 5):
+    if evidence_count > 0 AND snippets_resolved == 0 AND claims_total > 5:
+      base -= 0.3
+    This prevents responses with many claims but no code references.
+
+  Final: max(0, min(1, base))
+
+4. GATE EVALUATION (evaluateGroundingGate)
+-------------------------------------------
+  Params: (metrics, policy, attempt, maxAttempts)
+  Returns: GroundingDecision
+
+  Step A — Mode check:
+    if policy.mode == 'off' → PASS immediately (no gate)
+
+  Step B — Hard fail: no evidence
+    if metrics.evidence_count == 0:
+      return { ok: false, should_retry: false, reason_code: 'no_evidence',
+               user_message: "I couldn't find any relevant code..." }
+    (No retry; there's nothing to retry with)
+
+  Step C — Check citations:
+    if citations_found < min_citations → failedReason = 'no_citations'
+
+  Step D — Check strip rate:
+    if strip_rate > max_strip_rate → failedReason = 'high_strip_rate'
+
+  Step E — Check score:
+    score = computeGroundingScore(metrics, policy)
+    if score < min_score AND failedReason is null → failedReason = 'low_grounding'
+
+  If no failedReason: PASS (ok: true)
+
+  Decision matrix:
+    canRetry = (mode == 'retry_then_refuse' OR mode == 'retry_only')
+               AND attempt < maxAttempts
+
+    If canRetry → return { ok: false, should_retry: true, reason_code: failedReason }
+    If !canRetry → return { ok: false, should_retry: false, reason_code: failedReason,
+                            user_message: "Insufficient evidence..." }
+
+5. RETRY DIRECTIVE (getRetryDirective)
+---------------------------------------
+  When should_retry=true, getRetryDirective(reason_code) returns a prompt
+  addendum injected before the next generation attempt:
+
+  Base rules (always appended):
+    "- You MUST cite every technical claim with [SOURCE: filepath:start-end]."
+    "- If you cannot cite a claim, do NOT make it."
+    "- Prefer fewer claims/shorter response if it means 100% grounding."
+    "- Ensure every [SNIPPET] has a matching [SOURCE] citation within 300 chars."
+
+  Additional rule for 'no_citations':
+    "- Your previous response lacked citations. Provide at least 1-2 citations."
+
+  Additional rule for 'high_strip_rate':
+    "- Your previous response had too many hallucinated claims which were stripped."
+
+6. POLICY RESOLUTION ORDER
+-----------------------------
+  Function: resolveGroundingPolicy(taskType, pack)
+  
+  Priority 1 (highest): pack.grounding_policy JSONB column
+    Can override any field: min_score, max_strip_rate, min_citations,
+    max_unverified_claims, mode, applies_to_tasks
+  
+  Priority 2: Environment variables
+    GROUNDING_MIN_SCORE       → min_score
+    STRIP_RATE_MAX            → max_strip_rate
+    MIN_CITATIONS             → min_citations
+    MAX_UNVERIFIED_CLAIMS     → max_unverified_claims
+    GROUNDING_GATE_MODE       → mode
+    GROUNDING_GATE_APPLIES_TO_TASKS → CSV of task types
+
+  Priority 3: Code defaults
+    min_score: 0.80
+    max_strip_rate: 0.20
+    min_citations: 1
+    max_unverified_claims: 0
+    mode: 'retry_then_refuse'
+    applies_to_tasks: ['chat','global_chat','generate_module','refine_module','generate_quiz']
+
+7. DEFAULT GATE APPLICABILITY
+------------------------------
+  Gate ENABLED (default):
+    - chat
+    - global_chat
+    - generate_module
+    - refine_module
+    - generate_quiz
+
+  Gate DISABLED (default):
+    - module_planner
+    - generate_glossary
+    - generate_paths
+    - generate_ask_lead
+    - simplify_section
+    - create_template
+    - refine_template
+
+  To enable gate for all tasks: set GROUNDING_GATE_APPLIES_TO_TASKS to comma-separated list.
+  To disable entirely: set GROUNDING_GATE_MODE=off
+
+8. WHAT GETS LOGGED (rag_metrics + ai_audit_events)
+----------------------------------------------------
+  rag_metrics:
+    grounding_gate_passed: boolean
+    grounding_gate_reason: reason_code string
+    strip_rate: float
+    attempts: int
+    citations_found: int
+    citations_verified: int
+
+  ai_audit_events:
+    grounding_gate_passed: boolean
+    grounding_gate_reason: string
+    attempts: int
+    strip_rate: NUMERIC(6,4)
+    citations_found: int
+    unique_files_count: int
+    evidence_manifest: { citations: [{badge, chunk_id, path, start, end}] }
+
+9. KEY INVARIANTS
+------------------
+  - evidence_count == 0 is ALWAYS a hard refuse (no retry). This is the most
+    important invariant: we NEVER generate a response with no evidence.
+  - Max attempts is 3 (hardcoded in callWithAgenticReview). This cannot be
+    overridden to more than 3 at the function level.
+  - Gate evaluation runs on EVERY attempt, not just the final one.
+  - source_map pass-through: the last successful source_map (even after retry)
+    is the one stored in ai_audit_events.evidence_manifest.
+
+10. FAILURE MODES
+------------------
+  Issue: Gate refuses despite good content
+  Cause: verifyClaims is too aggressive; check strip_rate in rag_metrics
+  Fix: Check if AI is following [SOURCE: path:start-end] format; check verifier.ts
+
+  Issue: Gate always passes even with hallucinations
+  Cause: min_score or max_strip_rate thresholds are too lenient
+  Fix: Tighten thresholds in env vars or pack.grounding_policy
+
+  Issue: Retry loop hits max attempts for most queries
+  Cause: AI model not following citation requirements
+  Fix: Review system prompt for citation instructions; check evidence quality
+
+================================================================================
+END OF 09_Grounding_Gate_SLO_and_Refusal_Behavior.txt
+================================================================================

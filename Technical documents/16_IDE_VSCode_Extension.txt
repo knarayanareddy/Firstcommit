@@ -1,0 +1,162 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 16_IDE_VSCode_Extension.txt
+Purpose: VS Code Extension architecture, commands, authentication, pack picker,
+         citation webview, and deployment instructions.
+Audience: IDE Extension Engineers, DevOps
+Last Updated: 2026-03-19
+Related Code Paths:
+  - vscode-extension/src/extension.ts     (entry point, command registration)
+  - vscode-extension/src/packPicker.ts    (QuickPick + workspace state)
+  - vscode-extension/src/api.ts           (AI query + retrieve-spans calls)
+  - vscode-extension/src/auth.ts          (token management)
+  - vscode-extension/src/citations.ts     (citation rendering)
+  - vscode-extension/src/webview.ts       (result webview HTML)
+  - vscode-extension/src/webview/         (webview assets)
+  - vscode-extension/package.json         (extension manifest)
+================================================================================
+
+1. PURPOSE
+-----------
+The VS Code Extension brings RocketBoard AI capabilities directly into the
+developer's editor. Engineers can:
+  - Select code, right-click → "RocketBoard: Explain Selection"
+  - Use the Command Palette to query a specific pack
+  - Browse evidence citations in a side panel
+  - See AI responses grounded in the selected pack's knowledge
+
+2. AUTHENTICATION (auth.ts)
+-----------------------------
+  Storage: VS Code SecretStorage API (encrypted, OS keychain-backed)
+  Token: Supabase session access_token (JWT)
+  
+  Key functions:
+    storeToken(context, token) → stores to context.secrets
+    getToken(context) → retrieves stored token
+    clearToken(context) → clears token (logout)
+
+  Auth flow:
+    1. Extension prompts user to paste session token from RocketBoard web app
+    2. Token stored via SecretStorage
+    3. Token passed as Authorization: Bearer in all API calls
+    4. If token invalid/expired → user prompted to re-authenticate
+
+  Note: OAuth login flow from VS Code is not yet implemented.
+  Users must copy their session token from the browser.
+
+3. PACK PICKER (packPicker.ts)
+--------------------------------
+  Triggered by: command 'rocketboard.selectPack'
+  
+  Flow:
+    1. Call list-my-packs Edge Function with stored JWT
+    2. Shows VS Code QuickPick (dropdown) with pack titles
+    3. Selection persisted in two places:
+       a. workspaceState: 'rocketboard.selectedPack' (per-workspace, transient)
+       b. workspace config: 'rocketboard.packId' (settings.json, persistent)
+    4. Status bar item updated: "📦 PackTitle"
+
+  State consistency:
+    On activation, the extension checks if workspaceState has a selectedPack.
+    If not, it reads from workspace config (settings.json).
+    The status bar item always shows the current pack.
+
+4. EXPLAIN SELECTION COMMAND
+------------------------------
+  Command ID: 'rocketboard.explainSelection'
+  Menu: Right-click → "RocketBoard: Explain Selection"
+        Command Palette
+  
+  Flow:
+    1. Get selected text from active editor
+    2. Get selected pack (from workspaceState or config)
+    3. If no pack selected → prompt to run pack picker
+    4. Call retrieve-spans(pack_id, selectedText as query)
+    5. Build minimal envelope with evidence spans
+    6. Call ai-task-router (ai-task-router edge function)
+    7. Show webview panel with AI response + citations
+
+5. WEBVIEW (webview.ts + webview/ folder)
+-------------------------------------------
+  Technology: VS Code WebviewPanel with vanilla HTML/CSS/JS
+  
+  The webview renders:
+    - AI response text (HTML with [S#] badge spans)
+    - Source citations panel (clicking [S1] shows file path + line range)
+    - "Open in File" button (vscode.workspace.openTextDocument → editor)
+  
+  Security: 
+    - Webview uses restrictive CSP (Content-Security-Policy)
+    - LocalResourceRoots set to prevent access to filesystem
+    - No eval() or external scripts
+
+6. API CALLS (api.ts)
+----------------------
+  retrieveSpans(packId, query, token):
+    POST {SUPABASE_URL}/functions/v1/retrieve-spans
+    Headers: Authorization: Bearer {token}
+    Body: { pack_id, query, max_spans: 10 }
+    Returns: EvidenceSpan[]
+
+  callRouter(envelope, token):
+    POST {SUPABASE_URL}/functions/v1/ai-task-router
+    Headers: Authorization: Bearer {token}
+    Body: task envelope (built as minimal chat envelope)
+    Returns: { display_response, source_map }
+
+  listMyPacks(token):
+    POST {SUPABASE_URL}/functions/v1/list-my-packs
+    Headers: Authorization: Bearer {token}
+    Returns: { packs: [{id, title, description}] }
+
+  SUPABASE_URL and API key configurations:
+    Stored in package.json contributes.configuration
+    User can set 'rocketboard.supabaseUrl' in VS Code settings.
+
+7. EXTENSION MANIFEST (package.json)
+---------------------------------------
+  Extension ID: rocketboard.rocketboard-ai
+  Activation events: ['onStartupFinished']
+  
+  Commands:
+    rocketboard.explainSelection   — "Explain Selection with RocketBoard"
+    rocketboard.selectPack         — "Select RocketBoard Pack"
+    rocketboard.login              — "RocketBoard: Log In"
+    rocketboard.logout             — "RocketBoard: Log Out"
+  
+  Menu contributions:
+    editor/context: rocketboard.explainSelection (when text selected)
+  
+  Configuration:
+    rocketboard.supabaseUrl        — Supabase project URL
+    rocketboard.packId             — Persisted selected pack ID
+
+8. BUILD AND DEPLOYMENT
+------------------------
+  Build: node esbuild.js (bundles src/ → dist/extension.js)
+  Dev: Launch Extension Development Host from VS Code
+  Package: vsce package (creates .vsix)
+  Publish: vsce publish (to VS Code Marketplace)
+
+  Required files in dist/:
+    extension.js (bundled entry point)
+    webview/ assets
+
+9. KEY INVARIANTS
+------------------
+  - Session tokens NEVER stored in settings.json (SecretStorage only)
+  - Webview has no access to the filesystem beyond opened files
+  - All API calls use HTTPS (validated by external-url-policy on server side too)
+  - If retrieve-spans returns empty spans, a "no evidence found" message is shown
+    (the router will refuse; extension surfaces the user_message from the response)
+
+10. KNOWN LIMITATIONS (current state)
+---------------------------------------
+  - No OAuth login from VS Code (users must paste token from browser)
+  - Token refresh is not implemented (user must re-login when token expires)
+  - No streaming response (full response loaded before rendering)
+  - Detective mode not exposed as user-configurable option in extension yet
+
+================================================================================
+END OF 16_IDE_VSCode_Extension.txt
+================================================================================

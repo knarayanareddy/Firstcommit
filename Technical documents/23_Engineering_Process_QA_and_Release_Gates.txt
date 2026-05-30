@@ -1,0 +1,67 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 23_Engineering_Process_QA_and_Release_Gates.txt
+Purpose: Documentation of standardized engineering workflows, QA procedures,
+         PR acceptance checklists, and release gates.
+Audience: Engineers, QA, Security
+Last Updated: 2026-03-25
+Source-of-truth file paths:
+  - AGENTS.md (Section 7)
+  - .github/pull_request_template.md
+  - docs/process/QA_INDEX.md
+  - .github/workflows/pr-checklist-reminder.yml
+================================================================================
+
+1. CORE ACCEPTANCE WORKFLOW
+---------------------------
+All PRs touching the following directories MUST include and verify the 
+Cross-cutting Acceptance Checklist:
+- supabase/functions/**
+- supabase/migrations/**
+- vscode-extension/**
+- docs/mcp/**
+
+The checklist is located in AGENTS.md (Section 7) and is automatically prepended
+to the PR template in [.github/pull_request_template.md].
+
+2. CROSS-CUTTING ACCEPTANCE CHECKLIST
+-------------------------------------
+- [ ] AGENTS.md updated (where to change what / invariants)
+- [ ] Trust console updated (if metrics/schema changed)
+- [ ] Lifecycle controls safe (no dangerous purges/deletions)
+- [ ] Security review (RBAC, SSRF, no secret logs, output caps+redaction)
+- [ ] CI / Manual QA (verified via scripts/mcp-smoke-test.ts or rag-eval)
+
+3. QA ASSETS INDEX (docs/process/QA_INDEX.md)
+--------------------------------------------
+The index centralizes all repeatable test harnesses:
+
+| Asset              | Purpose                                | Core Command                |
+|--------------------|----------------------------------------|-----------------------------|
+| RAG Evaluation     | Validates grounding gate pass rates    | `npm run rag-eval`          |
+| MCP Smoke Test     | Validates tool contracts + security    | `npm run mcp-smoke-test`    |
+| Lifecycle QA       | Verifies RLS + purge idempotency       | `psql -f qa/lifecycle/*.sql`|
+| Roadmap QA         | Verifies dependency graph integrity    | `psql -f qa/roadmap/*.sql`  |
+| Security Audit     | Scans for CORS/Auth/SSRF regressions   | `node scripts/audit-edge-functions.mjs`|
+
+4. CI & RELEASE GATES
+---------------------
+- PR Checklist Reminder: A GitHub Action (.github/workflows/pr-checklist-reminder.yml)
+  posts a nudge comment if the checklist is missing from a sensitive PR.
+- Grounding SLO Gate: A mandatory runtime gate in `ai-task-router` that prevents
+  low-quality AI responses from reaching users. Default: min_score 0.80.
+- Deno Format Check: PRs fail if `deno fmt --check` does not pass.
+- Security Audit Regression: PRs fail if `node scripts/audit-edge-functions.mjs` finds issues.
+
+5. RELEASE RUNBOOK
+------------------
+- For new features (Rollups, Retention, MCP):
+  1. Verify migrations apply cleanly on dev.
+  2. Run the specific QA harness from Section 3.
+  3. Perform a manual security review (see docs/mcp/SECURITY_REVIEW.md).
+  4. Enable the feature flag (e.g., `roadmap_enabled` on `packs` table).
+  5. Monitor `lifecycle_audit_events` for errors during first few runs.
+
+================================================================================
+END OF 23_Engineering_Process_QA_and_Release_Gates.txt
+================================================================================

@@ -1,0 +1,158 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 12_Observability_Telemetry_RAG_Metrics_Rollups.txt
+Purpose: Observability architecture including Langfuse telemetry, rag_metrics
+         table, pack_quality_daily rollups, and debugging workflows.
+Audience: Backend Engineers, DevOps, SRE
+Last Updated: 2026-03-19
+Related Code Paths:
+  - supabase/functions/_shared/telemetry.ts
+  - supabase/migrations/20260320000000_rag_metrics.sql
+  - supabase/migrations/20260405000000_grounding_gate_metrics.sql
+  - supabase/migrations/20260408000000_pack_quality_daily_rollup.sql
+  - supabase/functions/rollup-pack-quality-daily/index.ts
+================================================================================
+
+1. TELEMETRY LAYER (_shared/telemetry.ts)
+------------------------------------------
+  Interface: TraceBuilder
+  Created via: createTrace(opts, { enabled })
+
+  Options:
+    taskType: string       // 'retrieve', 'ingest', 'router', etc.
+    requestId: string      // UUIDv4, correlates with rag_metrics.request_id
+    packId?: string
+    sourceId?: string
+    orgId?: string
+    userId?: string
+    serviceName?: string
+    environment?: string
+
+  Key methods:
+    startSpan(name, metadata?) → SpanHandle
+    SpanHandle.end(output?) → void
+    SpanHandle.error(message) → void
+    updateMetadata(fields) → void
+    setError(message[, code]) → this
+    flush() → async void      // sends trace to Langfuse (or noop if disabled)
+    getTraceId() → string
+    enable() / disable() → this (strategic sampling)
+
+  Backend: Langfuse (optional)
+    If LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY + LANGFUSE_BASE_URL are set:
+      → Traces sent to Langfuse instance
+    If keys not set:
+      → Falls back to console.log output (development mode)
+
+  Sampling & Data Privacy:
+    LANGFUSE_SAMPLE_RATE env var (0.0 to 1.0, default 1.0)
+    shouldTrace() → boolean (random-based sampling)
+    Ingestion: defaults to disabled (shouldTrace()); enabled if cost incurred
+      (i.e., embeddings were generated). This conserves Langfuse quota.
+
+    Data Privacy / Exfiltration Protection:
+    Raw LLM prompts (containing evidence spans) and model outputs are strictly 
+    REDACTED from Langfuse generation traces by default to prevent source code 
+    leakage. They are only emitted if the ENABLE_RAW_TELEMETRY="true" environment 
+    variable is explicitly set.
+
+2. RAG METRICS TABLE
+---------------------
+  Table: rag_metrics
+  Inserted by: ai-task-router → recordRagMetrics() (non-blocking, post-flight)
+  RLS SELECT: org members can view metrics for their org
+  
+  Key columns:
+    request_id TEXT           — correlates with trace ID and audit event
+    task_type TEXT            — 'chat' | 'global_chat' | 'generate_module' | etc.
+    pack_id UUID              — added in migration 20260407000000
+    trace_id TEXT             — Langfuse trace ID for drilldown
+    retrieval_method TEXT     — 'vector' | 'keyword' | 'hybrid' | 'graph'
+    chunks_retrieved INT      — spans returned from retrieve-spans
+    chunks_after_rerank INT   — spans kept after reranking
+    avg_relevance_score FLOAT — average RRF score
+    retrieval_latency_ms INT  — time for retrieval phase
+    generation_latency_ms INT — time for AI generation
+    input_tokens INT          — LLM prompt tokens
+    output_tokens INT         — LLM completion tokens
+    citations_found INT       — count of [S#] badges in final response
+    citations_verified INT    — count of unique valid citations
+    grounding_score FLOAT     — computed by grounding gate
+    strip_rate FLOAT          — claims_stripped / claims_total
+    grounding_gate_passed BOOL — final gate decision
+    grounding_gate_reason TEXT — reason_code from GroundingDecision
+    hop2_added INT            — count of chunks added via symbol reference expansion
+    attempts INT              — number of agentic retries
+    total_latency_ms INT      — end-to-end request time
+
+3. PACK QUALITY DAILY ROLLUP TABLE
+-------------------------------------
+  Table: pack_quality_daily
+  Purpose: Pre-aggregated daily metrics per pack for fast Trust Console charts
+  
+  Columns:
+    pack_id UUID, day DATE
+    total_requests INT, passed INT, refused INT, retried INT,
+    avg_strip_rate NUMERIC, avg_citations_found NUMERIC,
+    avg_attempts NUMERIC, total_latency_ms BIGINT, p95_latency_ms INT
+  
+  UNIQUE constraint: (pack_id, day)
+  
+  Population:
+    rollup-pack-quality-daily edge function:
+      - Aggregates rag_metrics rows for a target date (default: yesterday)
+      - Uses UPSERT with ON CONFLICT (pack_id, day) → UPDATE
+      - Idempotent: safe to run multiple times
+      - Request: { target_date?: string }  (YYYY-MM-DD format)
+    
+  Consumer:
+    TrustDashboard.tsx → useTrustTimeSeries() + useTrustSummary()
+      - Reads from pack_quality_daily when useRaw=false (default, fast)
+      - Reads from rag_metrics directly when useRaw=true (debug mode)
+
+4. TRUST CONSOLE METRICS (what the charts show)
+--------------------------------------------------
+  Pass Rate:    (passed / total_requests) * 100
+  Refusal Rate: (refused / total_requests) * 100
+  Avg Strip Rate: avg_strip_rate (lower is better)
+  P95 Latency:  p95_latency_ms
+  
+  Time windows: 7, 30, 90 days (controlled by UI day selector)
+
+5. CONTENT GAP REPORTING
+-------------------------
+  - Source: report_content_gap MCP tool.
+  - Target: pack_quality_daily (as a 'gap_count' metric) and Quality panel in UI.
+  - Purpose: Closes the observability loop by allowing agents to flag stale data.
+
+6. TRACE CORRELATION
+---------------------
+  trace_id in rag_metrics → links to Langfuse trace for full agentic loop detail
+  trace_id in ai_audit_events → same trace_id for forensic correlation
+  request_id → shared across rag_metrics, ai_audit_events, and API response
+
+  Request drilldown page:
+    /packs/:packId/trust/requests/:requestId → RequestDrilldown.tsx
+    Shows: task type, outcome, evidence used, timing breakdown
+
+7. OBSERVABILITY GAPS (current state)
+---------------------------------------
+  - No structured alerting (no PagerDuty/Slack alerts triggered by rag_metrics anomalies)
+  - Rollup cron is manual/on-demand; no automated nightly cron in production by default
+  - Embedding generation cost is not currently captured in rag_metrics
+
+  Step 7: Check knowledge_chunks count for the pack (are there chunks to retrieve?)
+
+8. HOW TO TROUBLESHOOT VIA METRICS
+-------------------------------------
+  Step 1: Open TrustDashboard → check pass rate and refusal rate trends
+  Step 2: Switch to "Raw (debug)" mode; check specific failed requests
+  Step 3: Get request_id from a failed request; open RequestDrilldown
+  Step 4: Use trace_id to look up the full trace in Langfuse
+  Step 5: Check: strip_rate (was AI citing?), grounding_gate_reason (what failed?)
+  Step 6: Check ingestion_jobs for the pack (were there recent failures?)
+  Step 7: Check knowledge_chunks count for the pack (are there chunks to retrieve?)
+
+================================================================================
+END OF 12_Observability_Telemetry_RAG_Metrics_Rollups.txt
+================================================================================

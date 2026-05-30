@@ -1,0 +1,81 @@
+version: 1
+defaults:
+  task_type: global_chat
+  max_spans: 15
+  detective_mode: true
+  must_pass_gate: true
+  thresholds:
+    min_citations: 2
+    max_strip_rate: 0.15
+    max_attempts: 1
+    min_unique_files: 2
+    max_latency_ms: 30000
+
+tests:
+  # Bucket A: Symbol-Heavy (10 tests)
+  - id: sym-def-auth-request
+    name: "Definition: authenticateRequest"
+    query: "Where is authenticateRequest defined and what are its parameters?"
+    thresholds:
+      rerank_skipped_expected: true
+  - id: sym-ref-auth-request
+    name: "References: authenticateRequest"
+    query: "Find all call sites of authenticateRequest in the router."
+  - id: sym-def-kg-expand
+    name: "Definition: kg_expand_v1"
+    query: "Show me the implementation of the kg_expand_v1 RPC."
+  - id: sym-ref-kg-expand
+    name: "References: kg_expand_v1"
+    query: "Which functions in the edge function call kg_expand_v1?"
+  - id: sym-def-hybrid-search
+    name: "Definition: hybrid_search_v2"
+    query: "What is the signature of the hybrid_search_v2 SQL function?"
+  - id: sym-def-detective-retrieval
+    name: "Definition: runDetectiveRetrieval"
+    query: "Explain the logic inside runDetectiveRetrieval."
+  - id: sym-ref-symbol-dictionary
+    name: "References: symbol-dictionary"
+    query: "Where is extractQualifiedSymbolsFromText used?"
+  - id: sym-def-reranker
+    name: "Definition: batchRerankWithLLM"
+    query: "How does the reranker prioritize snippets?"
+  - id: sym-ref-telemetry
+    name: "References: createTrace"
+    query: "Where is telemetry tracing initialized in the edge functions?"
+  - id: sym-def-cors
+    name: "Definition: buildCorsHeaders"
+    query: "Where are the CORS headers defined?"
+
+  # Bucket B: Setup/Config (5 tests)
+  - id: config-env-openai
+    name: "Config: OPENAI_API_KEY"
+    query: "Which files use the OPENAI_API_KEY environment variable?"
+  - id: config-env-kg-flags
+    name: "Config: KG_RETRIEVAL_ENABLED"
+    query: "Where are the KG retrieval feature flags read?"
+  - id: config-db-permissions
+    name: "Config: service_role permissions"
+    query: "Which migrations grant EXECUTE to service_role?"
+  - id: config-auth-origin
+    name: "Config: ALLOWED_ORIGINS"
+    query: "How are ALLOWED_ORIGINS parsed in the shared cors utility?"
+  - id: config-vault-creds
+    name: "Config: vault credentials"
+    query: "Where is the vault/credentials helper used for ingestion?"
+
+  # Bucket C: Conceptual (5 tests)
+  - id: concept-grounding-pipeline
+    name: "Concept: Grounding Pipeline"
+    query: "Explain the multi-step grounding pipeline from enforceNoDirectCode to Gate."
+  - id: concept-tenancy-isolation
+    name: "Concept: Tenancy Isolation"
+    query: "How does RocketBoard ensure one pack cannot see another pack's data?"
+  - id: concept-ingestion-flow
+    name: "Concept: Ingestion Flow"
+    query: "Give me a high level overview of the ingestion process from source to embedding."
+  - id: concept-security-invariants
+    name: "Concept: Security Invariants"
+    query: "What are the non-negotiable security invariants for AI agents?"
+  - id: concept-identifier-strategy
+    name: "Concept: Identifier Strategy"
+    query: "Describe the triple-identifier strategy (chunk_pk, stable_id, chunk_ref)."

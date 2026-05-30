@@ -1,0 +1,178 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 08_Detective_Loop_MultiHop_Retrieval.txt
+Purpose: Multi-hop retrieval system (Detective Loop) for following code
+         dependencies across chunks during AI generation.
+Audience: Backend Engineers, AI/ML Engineers
+Last Updated: 2026-03-19
+Related Code Paths:
+  - supabase/functions/ai-task-router/detective-retrieval.ts
+  - supabase/functions/ai-task-router/symbol-dictionary.ts
+  - supabase/migrations/20260401000000_detective_loop.sql
+================================================================================
+
+1. MOTIVATION
+--------------
+Standard RAG retrieval (Hop 0) finds chunks semantically similar to the query.
+But code is referential: a function explanation is incomplete without the types
+it imports and the helpers it calls. The Detective Loop follows these references
+across chunk boundaries for 1-2 hops, dramatically improving grounding quality
+for code-heavy answers.
+
+2. OVERVIEW
+-----------
+The detective loop runs AFTER initial retrieval and BEFORE the generation step.
+It is gated by: envelope.retrieval.detective_mode = true
+
+Entry point: runDetectiveRetrieval(supabase, envelope, initialSpans, queryText, opts)
+
+Options (with defaults):
+  maxHops: 1       (v1 cap — only 1 additional hop beyond Hop 0)
+  maxSymbols: 12   (max symbols to search per hop)
+  maxSpansTotal: 25  (total span cap after expansion)
+  maxTimeMs: 5000  (5-second time budget)
+
+3. HOP 0 (Initial Retrieval)
+------------------------------
+If initialSpans is provided (from retrieve-spans front-end call): use them.
+If initialSpans is empty but packId is available: fetch via hybrid_search_v2
+  with p_match_count=15, no embedding (text-only fallback).
+Result stored as currentSpans[].
+
+Hop 0 count captured in metrics.hop0_count.
+
+4. HOP 1 LOOP (Symbol Expansion)
+----------------------------------
+While hopsRun < maxHops AND elapsed time < maxTimeMs:
+
+  Step A: Rerank Hop 0
+    batchRerankWithLLM(queryText, currentSpans.slice(0, 15))
+    → Top-8 spans kept for symbol extraction (keptForSymbols)
+
+  Step B: Symbol Extraction (extractCandidateSymbols)
+    Source 1 — Chunk metadata (entity_name from knowledge_chunks):
+      Weight: 10 per occurrence (highest priority)
+    
+    Source 2 — DB lookup (exported_names + imports):
+      Query: knowledge_chunks WHERE id = span.chunk_id → SELECT exported_names, imports
+      exported_names weight: 5 per name
+      imports weight: 3 per name
+    
+    Source 3 — Text patterns (extractQualifiedSymbolsFromText):
+      Uses language-specific regex/patterns (symbol-dictionary.ts)
+      Language detection from file extension:
+        .ts/.tsx → 'typescript'
+        .js/.jsx → 'javascript'
+        .py     → 'python'
+        .go     → 'go'
+        .java   → 'java'
+        .rs     → 'rust'
+      Definition boost: if text contains 'class X', 'interface X', 'type X' → weight 2
+      Otherwise: weight 1
+    
+    Sorting and Cap:
+      Sort by weight DESC, cap at maxSymbols (default 12)
+
+  Step C: Hop 1 RPC (definition_search_v1)
+    Params: (p_org_id, p_pack_id, symbols[], p_match_count=15)
+    Returns: chunks where entity_name ILIKE ANY(symbols) OR exported_names && symbols
+    
+    Deduplication: filter out chunk IDs already in currentSpans
+    Append: new spans added to currentSpans up to maxSpansTotal (25 cap)
+
+  Loop exits if:
+    - symbols.length === 0 (nothing to search)
+    - totalSpans >= maxSpansTotal
+    - elapsed time >= maxTimeMs
+
+5. FINAL RERANK
+-----------------
+After loop completes:
+  batchRerankWithLLM(queryText, currentSpans)   (all expanded spans)
+  Spans renumbered S1..Sn in order.
+
+6. METRICS (DetectiveMetrics)
+------------------------------
+  {
+    detective_enabled: boolean,
+    hops_run: number,
+    hop0_count: number,    // spans from initial retrieval
+    hop1_added: number,    // new spans added in hop 1
+    symbols_extracted: number,
+    rerank_kept: number,   // final span count
+    time_ms: number
+  }
+  
+  These are stored in rag_metrics.metadata or returned in trace for debugging.
+
+7. DATABASE SETUP FOR DETECTIVE LOOP
+--------------------------------------
+Migration: supabase/migrations/20260401000000_detective_loop.sql
+
+  Added columns to knowledge_chunks:
+    - entity_type TEXT            (function, class, interface, variable, etc.)
+    - entity_name TEXT            (name of the entity)
+    - signature TEXT              (full type signature string)
+    - imports TEXT[]              (array of imported identifiers)
+    - exported_names TEXT[]       (array of exported identifiers)
+
+  Indexes added:
+    - GIN index on imports (for array overlap queries)
+    - GIN index on exported_names (for array overlap queries)
+    - idx on (pack_id, entity_name) for definition search
+
+  RPC: find_definitions_v1 (SECURITY DEFINER)
+    Matches entity_name ILIKE ANY(symbols) OR exported_names && symbols
+
+  RPC: find_references_v1 (SECURITY DEFINER)
+    Returns all chunks referencing a specific symbol within a pack.
+
+8. SUPPORTED LANGUAGES
+-----------------------
+  TypeScript / JavaScript: regex patterns for class, function, const, type, interface, enum
+  Python: def, class patterns
+  Go: func, type patterns
+  Java: class, interface, method patterns
+  Rust: fn, struct, impl, trait patterns
+  
+  Files with unsupported extensions: symbol extraction from text only (no metadata boost)
+
+9. KEY INVARIANTS
+------------------
+  - Detective loop NEVER exceeds maxTimeMs=5000ms. If it times out, it returns
+    whatever spans have been collected so far.
+  - Total spans are ALWAYS capped at maxSpansTotal=25 to prevent prompt overflow.
+  - Final rerank ensures that hop 1 additions don't dominate irrelevant results.
+  - definition_search_v1 only searches within the same pack (always scoped by pack_id).
+  - Deduplication by chunk_id prevents duplicates between hop 0 and hop 1.
+
+10. HOW TO ENABLE DETECTIVE MODE
+----------------------------------
+  In the envelope built by envelope-builder.ts:
+    retrieval.detective_mode = true
+  
+  In ai-task-router/index.ts:
+    if (envelope.retrieval?.detective_mode) {
+      const result = await runDetectiveRetrieval(supabase, envelope, initialSpans, queryText);
+      finalSpans = result.finalSpans;
+      detectiveMetrics = result.metrics;
+    }
+
+11. FAILURE MODES
+------------------
+  Issue: Hop 1 returns 0 spans
+  Cause: No chunks in this pack have matching entity_names for extracted symbols
+  Effect: Falls back to original Hop 0 spans (graceful degradation)
+
+  Issue: Detective mode is slow (> 3s)
+  Cause: Large number of symbols extracted, slow RPC queries
+  Fix: Reduce maxSymbols to 6; verify indexes on entity_name and exported_names
+
+  Issue: Hop 1 introduces irrelevant chunks
+  Cause: Symbol names are too generic (e.g., 'data', 'id', 'name')
+  Fix: normalizeCandidateSymbols() in symbol-dictionary.ts filters common names;
+       review the filter list if quality degrades
+
+================================================================================
+END OF 08_Detective_Loop_MultiHop_Retrieval.txt
+================================================================================

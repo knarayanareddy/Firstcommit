@@ -1,0 +1,209 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 19_Known_Gaps_Tech_Debt_and_Roadmap.txt
+Purpose: Honest documentation of known gaps, unimplemented features,
+         tech debt, and the future roadmap for RocketBoard's AI, security,
+         and operational systems.
+Audience: Engineers, Product, Leadership
+Last Updated: 2026-03-19
+================================================================================
+
+1. SECURITY GAPS
+-----------------
+
+Gap 1: DNS Rebinding (SSRF Defense)
+  Location: _shared/external-url-policy.ts
+  Status: PARTIAL
+  Description: The SSRF policy validates URL strings (scheme, port, hostname).
+               However, it does not resolve hostnames to check if the resolved
+               IP is in a private range (DNS rebinding attack).
+  Risk: A carefully crafted DNS entry could bypass SSRF protection after the
+        validation step.
+  Mitigation: Document + monitor; implement IP-resolution-based validation for
+              v2. Consider using a fetch-wrapper that re-validates after DNS lookup.
+  Priority: Medium (attack requires attacker to control DNS + target infra)
+
+Gap 2: In-Memory Rate Limiting
+  Location: ai-task-router/index.ts (rateLimitMap)
+  Status: PARTIAL
+  Description: Rate limiting is implemented per Deno isolate. On cold starts
+               or multiple isolates, the rate limit map resets.
+  Risk: Rate limiting may not hold under aggressive parallel calls if multiple
+        isolate instances are active.
+  Mitigation: For production scale, replace with Redis-backed distributed
+              rate limiting.
+  Priority: Medium (current scale: isolated per-worker is sufficient)
+
+Gap 3: Token Refresh in VS Code Extension
+  Location: vscode-extension/src/auth.ts
+  Status: NOT IMPLEMENTED
+  Description: The extension does not implement Supabase token refresh.
+               When the JWT expires, users must manually re-authenticate.
+  Risk: Poor UX; secure sessions time out without warning.
+  Fix: Implement refreshSession() flow in auth.ts using stored refresh token.
+  Priority: Medium
+
+Gap 4: AWS Secret Key Detection (False Positive Risk)
+  Location: _shared/secret-patterns.ts
+  Status: PARTIAL
+  Description: aws_secret_key pattern is intentionally broad (40-char base64)
+               to catch common patterns, but may generate false positives.
+  Risk: Legitimate base64-encoded data may be flagged as a secret, causing
+        chunks to be unnecessarily redacted.
+  Mitigation: Pattern is medium severity; chunk is still indexed (redact_and_index).
+              Review false positive rate in ingestion_jobs.metadata.redaction_summary.
+  Priority: Low (only affects retrieval quality, not security)
+
+2. OPERATIONAL GAPS
+--------------------
+
+Gap 5: No Automated Nightly Cron for Rollup Job
+  Service: rollup-pack-quality-daily
+  Status: NOT AUTOMATED
+  Description: The rollup edge function exists and is idempotent, but no pg_cron
+               or external scheduler is configured to run it nightly.
+  Impact: Trust Console charts may show stale or missing rollup data.
+  Fix: Configure Supabase pg_cron or Vercel cron to POST to rollup endpoint nightly.
+  Priority: High (without this, the "fast path" in Trust Console shows no data)
+
+Gap 6: No Automated Retention Cron
+  Service: lifecycle-retention-job
+  Status: NOT AUTOMATED
+  Description: Same as above — lifecycle retention job must be triggered manually
+               or via an external scheduler.
+  Impact: Data retention policies are only enforced when manually triggered.
+  Fix: Same as Gap 5 — configure cron.
+  Priority: High (enterprise compliance requires automated enforcement)
+
+Gap 7: No Streaming Responses
+  Location: ai-task-router, frontend, VS Code extension
+  Status: NOT IMPLEMENTED
+  Description: AI responses are fully buffered before being returned to the client.
+               No Server-Sent Events (SSE) or WebSocket streaming.
+  Impact: P75+ latency is high for long module generation tasks (10-30s wait).
+  Fix: Implement SSE streaming from ai-task-router; update frontend ChatMessage
+       to render incrementally.
+  Priority: High (significant UX improvement)
+
+Gap 8: No Email or Slack Alerts on Quality Regression
+  Location: Trust Console, lifecycle-retention-job
+  Status: NOT IMPLEMENTED
+  Description: No alerting triggers exist for anomalies (e.g., pass_rate < 50%,
+               or retention cleanup failing).
+  Fix: Add alert hook to rollup job; integrate with Slack or email.
+  Priority: Medium
+
+3. FEATURE GAPS
+----------------
+
+Gap 9: OAuth Login in VS Code Extension
+  Location: vscode-extension/src/auth.ts
+  Status: NOT IMPLEMENTED
+  Description: Users must paste a JWT token from the browser. Native OAuth
+               within the VS Code extension would be more secure and user-friendly.
+  Fix: Implement VS Code OAuth flow (vscode.authentication API or custom WebView login).
+  Priority: Medium
+
+Gap 10: Export Data / Signed URL (Lifecycle)
+  Location: Lifecycle Controls
+  Status: NOT IMPLEMENTED (by design — out of v1 scope)
+  Description: No ability to export knowledge_chunks or rag_metrics to object
+               storage (S3, GCS) for long-term archival.
+  Fix: Add export-source edge function that streams chunks to signed URL.
+  Priority: Low (enterprise add-on)
+
+Gap 11: Circular Dependency UI Warning (Roadmap Builder)
+  Location: RoadmapBuilder.tsx
+  Status: NOT IMPLEMENTED
+  Description: DB trigger prevents circular dependencies, but the UI does not
+               show a clear error message when the INSERT is rejected.
+  Fix: Catch the DB error in the frontend; display "Circular dependency detected".
+  Priority: Low
+
+Gap 12: Detective Mode Configuration in Extension
+  Location: vscode-extension
+  Status: NOT IMPLEMENTED
+  Description: VS Code extension does not expose a toggle for detective_mode.
+               It sends detective_mode=false in all requests.
+  Fix: Add setting 'rocketboard.detectiveMode' (boolean) to extension config.
+  Priority: Low
+
+Gap 13: Output Token Tracking
+  Location: ai-task-router, rag_metrics
+  Status: PARTIAL
+  Description: input_tokens and output_tokens fields exist in rag_metrics but
+               are not consistently populated across all task types. Some AI
+               responses don't expose usage metadata.
+  Fix: Ensure callWithAgenticReview extracts usage from all response formats.
+  Priority: Medium
+
+Gap 14: Multi-Org Pack Sharing
+  Location: pack_members, packs
+  Status: NOT IMPLEMENTED
+  Description: A pack is scoped to one org. Cross-org sharing is not supported.
+  Fix: Add pack sharing table; update RLS to check shared_packs in addition
+       to pack_members.
+  Priority: Low
+
+4. TECH DEBT
+-------------
+
+Debt 1: Global Langfuse import warning
+  Location: _shared/telemetry.ts
+  Description: Uses `npm:langfuse@2` import in Deno which may produce linting
+               warnings in CI depending on tooling version. Not a runtime error.
+  Fix: Pin to exact version or use esm.sh import map.
+
+Debt 2: ingest-source CODEOWNERS parsing scope
+  Location: ingest-source/index.ts (fetchGitHubFile for CODEOWNERS)
+  Description: CODEOWNERS is fetched after SSRF validation of source_uri, but
+               the `githubToken` variable is used outside the closure where
+               it's declared. This works by JavaScript hoisting but is unclear.
+  Fix: Refactor to pass token explicitly to fetchGitHubFile call.
+
+Debt 3: Citation format inconsistency in older content
+  Location: ai-task-router verifier.ts
+  Description: Some historic modules were generated with a slightly different
+               [SOURCE: path:start-end] format variant. Backward compatibility
+               is maintained by flexible regex, but this adds regex complexity.
+  Fix: Re-generate affected modules; normalize citation format.
+
+Debt 4: Missing test coverage for grounding gate
+  Location: ai-task-router/grounding-gate.ts
+  Status: Unit tests are absent. The gate is tested via regression harness only.
+  Fix: Add unit tests for computeGroundingScore and evaluateGroundingGate.
+
+5. ROADMAP (PLANNED BUT NOT YET IMPLEMENTED)
+---------------------------------------------
+  Phase 7A: Streaming responses (SSE from router to frontend)
+  Phase 7B: Automated nightly crons (rollup + retention)
+  Phase 7C: Export + signed URL for lifecycle
+  Phase 7D: Legal hold enforcement UI (not just schema flag)
+  Phase 8:  Multi-org pack sharing
+  Phase 9:  VS Code OAuth login flow
+  Phase 10: Alert webhooks for quality SLO violations
+  Phase 11: Language-specific AST parsers for Symbol Graph (Graph v2)
+  Phase 12: Integrated Slack notifications for `report_content_gap`
+  Phase 13: Bulk "Publish all" for Docs-in-platform Review page
+
+6. RECENT GAPS (NEW)
+--------------------
+Gap 15: Symbol Extractor Regex Limitations
+- Status: PARTIAL.
+- Description: Shared symbol extractor uses regex; lacks full AST context for language-specific overloading.
+- Risk: Potential false positives during `find_references`.
+- Priority: Medium (requires language-specific parser integration v3).
+
+Gap 16: MCP Tool Size Caps
+- Status: PARTIAL.
+- Description: Large document retrievals in MCP tools may exceed context limits.
+- Risk: Agent truncation or refusal.
+- Priority: Low (Current 50k char cap is sufficient for most docs).
+
+Gap 17: Docs-in-platform Stitching Order
+- Status: PARTIAL.
+- Description: `sync-pack-docs` relies on chunk creation order; lacks explicit `order_by` if chunks are split across multiple ingestion jobs.
+
+================================================================================
+END OF 19_Known_Gaps_Tech_Debt_and_Roadmap.txt
+================================================================================

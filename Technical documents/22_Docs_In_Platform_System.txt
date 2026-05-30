@@ -1,0 +1,92 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 22_Docs_In_Platform_System.txt
+Purpose: Technical specification of the "Docs-in-platform" system including
+         schema, synchronization logic, and block-based rendering.
+Audience: Fullstack Engineers, Content Authors
+Last Updated: 2026-03-20
+Source-of-truth file paths:
+  - supabase/migrations/20260320162800_pack_docs_v1.sql
+  - supabase/functions/sync-pack-docs/index.ts
+  - src/pages/ReviewPage.tsx
+================================================================================
+
+1. PURPOSE
+----------
+The Docs-in-platform system allows technical documentation stored in the repo
+(e.g., under Technical documents/) to be synced, redacted, parsed into structured
+blocks, and rendered natively within the RocketBoard UI. 
+
+Key features:
+- Block-based parsing (Headings, Mermaid, Code, Checklists, Callouts).
+- Progress tracking per learner per document.
+- Automatic redaction of secrets during sync.
+- Draft/Published status control for authors.
+
+2. DATABASE SCHEMA
+------------------
+
+2.1 pack_docs
+    - Table: public.pack_docs
+    - Key Columns:
+      - pack_id: UUID (NOT NULL)
+      - slug: TEXT (Unique per pack)
+      - status: 'draft' | 'published' | 'archived'
+      - content_plain: TEXT (redacted full text)
+      - source_path: TEXT (relative path in repo)
+    - RLS: 
+      - Published docs: Readable by all 'learner' pack members.
+      - Drafts: Readable/Writable ONLY by 'author' role.
+
+2.2 pack_doc_blocks
+    - Table: public.pack_doc_blocks
+    - Purpose: Normalized segments of the document for structured rendering.
+    - Types: heading, paragraph, callout, checklist, code, mermaid, table, link, divider.
+    - payload: JSONB (contains block-specific data like code language or diagram code).
+
+2.3 pack_doc_progress
+    - Table: public.pack_doc_progress
+    - Tracks status ('in_progress', 'done') and checklist_state per user.
+    - RLS: Users can manage their own row; authors can view aggregate progress.
+
+2.4 pack_doc_edges
+    - Table: public.pack_doc_edges
+    - types: 'references', 'prerequisite', 'related'.
+    - Used to build the documentation navigation graph.
+
+3. SYNCHRONIZATION (sync-pack-docs)
+-----------------------------------
+- Edge Function: /functions/v1/sync-pack-docs
+- Activation: Manually triggered by pack author via UI or API.
+- Process:
+  1. Auth check: Caller must be an 'author' on the pack.
+  2. Fetch: Chunks with `Technical documents/` prefix from `knowledge_chunks`.
+  3. Stitch: Reassemble chunks into one text block.
+  4. Redact: Run `redactText` (second pass check).
+  5. Parse: Deterministic block builder (Markdown-lite parser).
+  6. Upsert: Save to `pack_docs` and replace `pack_doc_blocks` (destructive).
+  7. Audit: Log 'sync_docs' to `lifecycle_audit_events`.
+
+4. RENDERING & UI
+-----------------
+- ReviewPage.tsx: Main dashboard for authors to review and publish docs.
+- DocViewer.tsx: Renders structured blocks (Client-side rendering).
+- MermaidDiagram.tsx: Native integration for rendering Mermaid blocks from JSON payload.
+
+5. SECURITY MODEL
+-----------------
+- Redaction: Every sync runs `_shared/secret-patterns.ts`.
+- Multi-tenancy: Enforced by RLS on `pack_id`.
+- Sanitization: Payloads are sanitized before rendering checkmarks or code blocks.
+
+6. HOW TO TEST
+--------------
+1. Create a document in `Technical documents/`.
+2. Run ingestion (ingest-source) to populate `knowledge_chunks`.
+3. Call `sync-pack-docs` via Postman or the Review dashboard.
+4. Verify `pack_docs` and `pack_doc_blocks` are populated.
+5. Verify published doc is visible to a learner.
+
+================================================================================
+END OF 22_Docs_In_Platform_System.txt
+================================================================================

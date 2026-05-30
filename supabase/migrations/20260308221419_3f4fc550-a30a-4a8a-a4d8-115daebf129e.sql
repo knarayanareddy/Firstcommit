@@ -1,0 +1,1 @@
+ALTER TABLE public.pack_tracks ADD CONSTRAINT pack_tracks_pack_id_track_key_unique UNIQUE (pack_id, track_key);

@@ -1,0 +1,152 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 13_Trust_Quality_Console.txt
+Purpose: Trust/Quality Console architecture, data sources, UI components,
+         and the AI Governance Audit Log panel.
+Audience: Backend Engineers, Frontend Engineers, Product
+Last Updated: 2026-03-19
+Related Code Paths:
+  - src/pages/TrustDashboard.tsx
+  - src/pages/RequestDrilldown.tsx
+  - src/hooks/useTrustData.ts
+  - src/components/trust/LifecycleHealthPanel.tsx
+  - src/components/trust/AiAuditLogPanel.tsx
+================================================================================
+
+1. PURPOSE
+-----------
+The Trust/Quality Console is an admin-facing dashboard available at:
+  /packs/:packId/trust
+
+It provides pack authors and admins with:
+  - Grounding quality metrics (pass rate, refusal rate, strip rate, latency)
+  - Ingestion health (recent jobs, chunk count)
+  - Lifecycle and retention health
+  - AI Governance Audit Log (forensic view of individual AI interactions)
+
+Access: Only users with role='author' or role='admin' for the pack can view
+        this dashboard. This is enforced at both UI level and DB RLS level.
+
+2. DATA SOURCES
+----------------
+  Fast path (default): pack_quality_daily rollup table
+    → useTrustSummary(packId, days, useRaw=false) uses rollup data
+    → useTrustTimeSeries(packId, days, useRaw=false) uses rollup data
+    → O(days) rows, fast queries
+
+  Debug path: rag_metrics raw table
+    → useTrustSummary(packId, days, useRaw=true) uses raw data
+    → useTrustTimeSeries(packId, days, useRaw=true) uses raw data
+    → Heavier queries, but real-time
+
+  The UI shows a warning banner when rollups haven't been generated yet
+  but raw metrics exist (indicating rollup job hasn't run for the period).
+
+  Latest Requests table: always from raw rag_metrics (no rollup)
+    → useLatestRequests(packId) — most recent 15 requests
+
+  Ingestion Health: from ingestion_jobs table
+    → useIngestionSummary(packId) — recent jobs + total chunk count
+
+  Content Gaps: from report_content_gap MCP tool
+    → Agents report stale/missing data; authors view these in the Quality panel.
+    → See 21_MCP_Tool_Contracts.txt for tool spec.
+
+3. TIME WINDOW SELECTOR
+------------------------
+  Options: 7 days, 30 days, 90 days
+  Default: 7 days
+  State held in: useState(7) in TrustDashboard.tsx
+
+4. SUMMARY METRICS CARDS
+--------------------------
+  Grounding Gate Pass: (passed / total_requests) * 100%
+    Status: green if > 90%, yellow if ≤ 90%
+  
+  Refusal Rate: (refused / total_requests) * 100%
+    Status: green if < 5%, yellow if ≥ 5%
+  
+  Avg Strip Rate: avg_strip_rate (raw decimal, 0.0 = no stripping)
+    Status: green if < 0.10, yellow if ≥ 0.10
+  
+  P95 Latency: p95_latency_ms / 1000 (converted to seconds)
+    Status: green if < 10s, yellow if ≥ 10s
+
+5. TIME SERIES CHART
+---------------------
+  Type: Recharts AreaChart
+  X-axis: date (from rag_metrics.created_at or pack_quality_daily.day)
+  Y-axis: latency_ms and strip_rate series overlaid
+  Note: Two Y-axes would be ideal; currently both on same scale (known limitation)
+
+6. LATEST REQUESTS TABLE
+--------------------------
+  Columns: Time, Task Type, Outcome (Passed/Refused badge), Citations,
+           Strip Rate, Latency, Drilldown link
+  Source: rag_metrics direct query (useLatestRequests hook)
+  Each row has a drilldown link → /packs/:packId/trust/requests/:requestId
+
+7. REQUEST DRILLDOWN (RequestDrilldown.tsx)
+---------------------------------------------
+  Accessed at: /packs/:packId/trust/requests/:requestId
+  Shows:
+    - Request metadata (task_type, request_id, trace_id, timestamp)
+    - Grounding verdict (gate_passed, reason, strip_rate, citations)
+    - Evidence used (chunk paths and line ranges)
+    - Langfuse trace link (if trace_id exists)
+
+8. LIFECYCLE AND RETENTION PANEL (LifecycleHealthPanel.tsx)
+-------------------------------------------------------------
+  Renders:
+    - Pack retention policy (retention_rag_metrics_days, retention_audit_days, legal_hold)
+    - Recent lifecycle_audit_events (last 10)
+    - Purge action UI linking to LifecycleSettings page
+
+9. AI GOVERNANCE AUDIT LOG (AiAuditLogPanel.tsx)
+-------------------------------------------------
+  Data source: ai_audit_events table
+  Fetches latest 15 events for the pack.
+  
+  Summary cards:
+    - Retention Window (from pack_lifecycle_policies.retention_audit_days, default 365 days)
+    - Grounding Health (pass rate for last N events)
+    - Identity Scoping (static description, always shows multi-tenant isolation message)
+  
+  Audit Log Table columns:
+    Task type | Outcome icon | Reason | Evidence summary | Time | Detail link
+  
+  Detail modal (Dialog):
+    Tab 1 — Identity & Origin:
+      - user_id, trace_id
+    Tab 2 — Grounding Verdict:
+      - gate_passed, attempts, strip_rate, unique_files_count, reason
+    Tab 3 — Evidence Manifest:
+      - Table: badge | path | lines | chunk ID prefix
+      - Note: includes Graph v2 spans added via reference expansion.
+    Tab 4 — Data Integrity:
+      - prompt_hash (first 12 chars shown), prompt_preview
+      - response_hash (first 12 chars shown), response_preview
+
+  Security: Only renders if user has author/admin role (enforced by RLS on ai_audit_events)
+
+10. KEY INVARIANTS
+-------------------
+  - Trust Console never exposes raw prompts or response content (only truncated previews)
+  - Hashes (SHA256) are shown truncated (12 chars) to confirm integrity without exposing content
+  - Trust Console does not expose connector credentials or vault secrets
+
+11. HOW TO TEST
+----------------
+  1. Log in as author for a pack
+  2. Navigate to /packs/:packId/trust
+  3. Verify summary cards show data (not all 0%)
+  4. Click into a request in Latest Requests table
+  5. Verify drilldown shows expected citation count and grounding reason
+  6. Navigate to AI Governance Audit Log section
+  7. Click an event row → verify forensic modal opens with evidence manifest
+  8. Log in as learner → verify /packs/:packId/trust returns 403 or empty state
+  9. Verify 'graph' retrieval_method appears for requests using symbol lookups.
+
+================================================================================
+END OF 13_Trust_Quality_Console.txt
+================================================================================

@@ -1,0 +1,111 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 14_RAG_Regression_Test_Harness_CI.txt
+Purpose: RAG regression testing system including test suites, runner,
+         CI integration, thresholds, and how to add new tests.
+Audience: Engineers, QA
+Last Updated: 2026-04-24
+Related Code Paths:
+  - rag-eval/ directory
+  - .github/workflows/
+================================================================================
+
+1. PURPOSE
+-----------
+The RAG regression harness prevents grounding quality regressions from being
+merged into main. It runs a curated set of test queries and verifies that the
+retrieval + grounding pipeline meets minimum scores.
+
+2. LOCATION AND STRUCTURE
+---------------------------
+  rag-eval/
+    suites/         — JSON test suites, one per domain/category
+    runner/         — test execution script
+    results/        — stored baseline results
+    README.md       — setup and usage instructions
+
+3. TEST SUITE FORMAT
+---------------------
+  Each suite is a JSON file in rag-eval/suites/:
+  {
+    "name": "Authentication Tests",
+    "pack_id": "<test-pack-uuid>",
+    "cases": [
+      {
+        "id": "auth-001",
+        "query": "How does JWT authentication work?",
+        "expected_paths": ["src/pages/", "supabase/functions/"],  // expected file paths
+        "min_citations": 1,
+        "min_grounding_score": 0.80
+      }
+    ]
+  }
+
+4. RUNNER
+----------
+  The runner executes each test case against the live retrieve-spans +
+  ai-task-router endpoints:
+    1. Call retrieve-spans with the test query
+    2. Build a minimal envelope with the returned spans
+    3. Call ai-task-router
+    4. Parse the response: extract citations, strip_rate, grounding_gate_passed
+    5. Compare against expected_paths and thresholds
+    6. Report pass/fail per test case
+
+  Environment variables required by runner:
+    SUPABASE_URL, SUPABASE_ANON_KEY (or service role for runner)
+    LOVABLE_API_KEY (or OPENAI_API_KEY)
+
+5. CI INTEGRATION
+------------------
+  Location: .github/workflows/
+  Trigger: On PR to main; on push to main
+  Failure behavior: PR blocked if regression threshold crossed
+  
+  Default thresholds (must ALL pass):
+    min_pass_rate: 0.80     (80% of test cases must pass)
+    max_strip_rate: 0.20    (average strip rate across tests)
+    min_avg_citations: 1.0  (average citations per passing response)
+
+6. HOW TO ADD A NEW TEST
+--------------------------
+  1. Create or edit a file in rag-eval/suites/
+  2. Add a test case object with:
+     - A unique id string
+     - A realistic user query (must be grounded in pack content)
+     - expected_paths: file path prefixes that should appear in citations
+     - min_citations and min_grounding_score thresholds
+  3. Run the runner locally to verify it passes
+  4. Commit and submit PR
+
+7. KNOWN LIMITATIONS
+---------------------
+  - Tests require a pre-ingested test pack with known content (not a mock)
+  - Dynamic test expectations (e.g., checking snippet content) are not yet supported
+  - Runner does not test detective mode expansion (Hop 1) in isolation
+
+8. GENERAL CI STATIC CHECKS & LINTING
+---------------------------------------
+  Beyond RAG regression, the repository includes safety-critical CI linters 
+  and scheduled pipelines to prevent architectural drift and security flaws:
+
+  Scheduled Workflows:
+    - db-types-check.yml runs weekly (cron: "0 9 * * 1") to detect schema
+      drift. It executes `supabase gen types` against the live schema and 
+      fails the CI pipeline if `src/integrations/supabase/types.ts` is outdated.
+      (Guarded by `github.repository` checks to prevent unnecessary fork runs).
+
+  NPM Lint Guards (Enforced on PRs):
+    - `npm run check:types` : Blocks PRs if new DB tables are missing from `types.ts`.
+    - `npm run check:credentials` : Prevents Edge Functions from attempting 
+      bare reads of `pack_source_credentials.credential_value` instead of Vault.
+    - `npm run check:internal-auth` : Static analyzer preventing bare Service Role
+      `fetch()` tokens without proper `X-Rocketboard-Internal` fallback logic.
+
+VERIFICATION NOTE: The rag-eval/ directory structure should be verified in
+the repository. If the directory exists but is empty or contains only a README,
+the harness is partially implemented. Check 19_Known_Gaps.txt.
+
+================================================================================
+END OF 14_RAG_Regression_Test_Harness_CI.txt
+================================================================================

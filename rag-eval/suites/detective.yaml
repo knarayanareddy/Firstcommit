@@ -1,0 +1,26 @@
+version: 1
+defaults:
+  task_type: global_chat
+  max_spans: 10
+  detective_mode: true
+  must_pass_gate: true
+  thresholds:
+    min_citations: 2
+    max_strip_rate: 0.20
+    max_attempts: 2
+    min_unique_files: 3
+    max_latency_ms: 45000
+
+tests:
+  - id: auth-flow-handler-detective
+    name: "Explain handler flow across files (detective)"
+    query: "Explain how the request handler works and where auth is validated."
+    thresholds:
+      min_unique_files: 3
+      expanded_chunks_added_min: 2
+
+  - id: config-driven-behavior
+    name: "Config-driven behavior"
+    query: "What config values control feature X? Where are defaults defined?"
+    thresholds:
+      min_citations: 3

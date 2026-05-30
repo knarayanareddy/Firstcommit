@@ -1,0 +1,212 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 06_RAG_Retrieval_and_Hybrid_Search.txt
+Purpose: Evidence retrieval architecture including hybrid search algorithm,
+         RPC contracts, scoring, context filtering, and failure modes.
+Audience: Backend Engineers, ML/AI Engineers
+Last Updated: 2026-03-19
+Related Code Paths:
+  - supabase/functions/retrieve-spans/index.ts
+  - supabase/migrations/20260318000000_secure_hybrid_search.sql
+  - supabase/migrations/20260317000100_hybrid_search_logic.sql
+  - supabase/migrations/20260401000000_detective_loop.sql
+  - supabase/functions/_shared/embedding-reuse.ts
+================================================================================
+
+1. PURPOSE AND OVERVIEW
+--------------------------
+The RAG retrieval layer converts a user's natural language query into a ranked
+list of evidence spans from the pack's knowledge_chunks table. These spans form
+the grounding evidence for all AI generation tasks.
+
+Two retrieval mechanisms exist:
+  A) hybrid_search_v2     — primary, called by retrieve-spans Edge Function
+  B) definition_search_v1 — secondary, called during Detective Loop (Hop 1)
+
+2. retrieve-spans EDGE FUNCTION
+---------------------------------
+  Endpoint: POST /functions/v1/retrieve-spans
+  Auth: JWT Bearer (user)
+  
+  Request Schema:
+  {
+    "pack_id": "uuid",       // required
+    "query": "string",       // required, max 500 chars
+    "max_spans": 10,         // optional, default 10, clamped to [1, 50]
+    "module_key": "string",  // optional — filter to this module's chunks
+    "track_key": "string",   // optional — filter to this track's chunks
+    "match_threshold": 0.5   // optional — min cosine similarity (0.0 to 1.0)
+  }
+
+  Response Schema:
+  {
+    "spans": [
+      {
+        "span_id": "S1",         // assigned sequentially
+        "path": "repo:owner/name/src/App.tsx",
+        "chunk_id": "uuid",
+        "start_line": 10,
+        "end_line": 45,
+        "text": "function handleRequest...",
+        "metadata": {
+          "entity_type": "function",
+          "entity_name": "handleRequest",
+          "signature": "function handleRequest(req: Request): Response"
+        }
+      }
+    ],
+    "trace_id": "uuid",
+    "latency_ms": 230
+  }
+
+  Authentication steps:
+    1. Bearer JWT extracted from Authorization header
+    2. supabase.auth.getUser() validates the JWT
+    3. pack_members table checked for membership (service_role client)
+    4. Non-member gets 403 Forbidden
+
+3. HYBRID SEARCH ALGORITHM (hybrid_search_v2 RPC)
+----------------------------------------------------
+  Implementation: PL/pgSQL SECURITY DEFINER function
+  Location: supabase/migrations/20260318000000_secure_hybrid_search.sql
+
+  Algorithm Steps:
+  a) Resolve active_generation_id from pack_active_generation table.
+     Fallback: latest generation_id from knowledge_chunks if no ledger exists.
+  
+  b) Vector Matches (pgvector cosine similarity):
+     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> p_query_embedding)
+     FROM knowledge_chunks
+     WHERE org_id=? AND pack_id=? AND is_redacted=false
+       AND generation_id=v_generation_id
+       AND module_key=? (optional) AND track_key=? (optional)
+       AND (1 - (embedding <=> p_query_embedding)) > p_match_threshold
+     LIMIT p_match_count * 2
+  
+  c) FTS Matches (PostgreSQL full-text search):
+     SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank_cd(fts, websearch_to_tsquery('english', ?)) DESC)
+     FROM knowledge_chunks
+     WHERE org_id=? AND pack_id=? AND is_redacted=false
+       AND fts @@ websearch_to_tsquery('english', p_query_text)
+     LIMIT p_match_count * 2
+  
+  d) RRF Merge (Reciprocal Rank Fusion, k=60 by default):
+     FULL OUTER JOIN vector_matches + fts_matches
+     rrf_score = COALESCE(1/(k + v_rank), 0) + COALESCE(1/(k + f_rank), 0)
+     ORDER BY rrf_score DESC
+     LIMIT p_match_count
+  
+  e) Graph Expansion (1-step): 
+     Find chunks where exported_names && base_chunks.imports (array overlap)
+     Score = base_chunk.rrf_score * 0.5 (discounted)
+     Only adds up to 5 extra chunks not already in base set
+     Filtered by is_redacted=false
+  
+  f) Returns UNION of base + graph expansion, ordered by score DESC
+
+  Key Parameters:
+    p_match_threshold: 0.5  (min cosine similarity for vector leg)
+    p_rrf_k: 60             (RRF smoothing constant)
+    p_match_count: 15       (default max results)
+
+  Key Filters (ALWAYS applied):
+    is_redacted = false      — blocks secret-contaminated chunks
+    generation_id matching   — blocks stale/previous generation chunks
+
+4. EMBEDDING GENERATION
+-------------------------
+  Model: text-embedding-3-small (OpenAI)
+  Dimension: 1536
+  Endpoint: https://api.openai.com/v1/embeddings
+  Fallback: If embedding generation fails, retrieve-spans falls back to
+            keyword-only search (FTS only, no vector leg).
+  This fallback is logged with [RETRIEVAL] warning prefix.
+
+  In ingest-source: embeddings are generated per chunk and stored in
+  knowledge_chunks.embedding column.
+  Reuse: processEmbeddingsWithReuse() skips regeneration if content_hash matches.
+
+5. DEFINITION SEARCH RPC (Detective Loop)
+-------------------------------------------
+  RPC Name: definition_search_v1
+  Location: supabase/migrations/20260401000000_detective_loop.sql
+  Purpose: Find chunks where entity_name or exports match a list of symbols
+  
+  Params:
+    p_org_id UUID, p_pack_id UUID, p_symbols TEXT[], p_match_count INT
+  
+  Algorithm:
+    SELECT * FROM knowledge_chunks
+    WHERE org_id=? AND pack_id=?
+      AND is_redacted=false
+      AND (
+        entity_name ILIKE ANY(p_symbols)
+        OR exported_names && p_symbols::text[]
+      )
+    LIMIT p_match_count
+
+6. RETRIEVAL DIAGNOSTICS (Trace Metadata)
+------------------------------------------
+  After hybrid_search_v2 returns, retrieve-spans records in trace:
+    top1_score: highest RRF score
+    avg_score: average RRF score
+    unique_files_count: distinct file paths in result
+    embedding_model: 'text-embedding-3-small'
+    latency_ms: total time from request to response
+
+7. KEY INVARIANTS
+------------------
+  - is_redacted=false filter is applied in EVERY WHERE clause of hybrid_search_v2.
+    This is the primary defense against returning secrets to the AI.
+  - Retrieval always uses the active generation. Stale chunks are never returned.
+  - Max spans returned to the router is 50 (enforced in ai-task-router sanitizeInputs).
+  - Definition search only searches within the same pack (pack_id scoped).
+  - Graph expansion is bounded to 5 additional chunks to prevent relevance dilution.
+
+8. INTERFACES / CONTRACTS
+---------------------------
+  See section 2 for retrieve-spans request/response schemas.
+  
+  hybrid_search_v2 return columns:
+    id, path, content, entity_type, entity_name, signature, line_start, line_end, score
+
+  Note: retrieve-spans maps these to:
+    span_id (assigned), path, chunk_id (=id), start_line (=line_start),
+    end_line (=line_end), text (=content), metadata.entity_type, .entity_name, .signature
+
+9. FAILURE MODES
+-----------------
+  Issue: Empty result set
+  Causes:
+    - No chunks indexed for this pack (ingest first)
+    - All chunks are is_redacted=true (check redaction ratios in ingestion_jobs metadata)
+    - Active generation mismatch (run reindex)
+    - Query too short or too generic in FTS (try more specific terms)
+    - Embedding failure (check OPENAI_API_KEY)
+  
+  Issue: Stale chunks appearing
+  Cause: pack_active_generation not updated after new ingestion run
+  Fix: Ensure ingestion job properly flips active_generation_id on completion
+  
+  Issue: Missing expected code (entity not found)
+  Cause: File extension not in SUPPORTED_EXTENSIONS list, or file > chunk size cap
+  Fix: Check ingest-source SUPPORTED_EXTENSIONS and SUPPORTED_FILENAMES constants
+
+10. HOW TO TEST
+----------------
+  Manual:
+    POST /functions/v1/retrieve-spans
+    { "pack_id": "<uuid>", "query": "authentication handler", "max_spans": 5 }
+    Verify spans contain relevant file paths and non-empty text.
+  
+  SQL test (in Supabase SQL editor):
+    SELECT * FROM hybrid_search_v2(
+      '<org_id>'::uuid, '<pack_id>'::uuid,
+      'authentication', NULL,
+      0.5, 10, 60, NULL, NULL
+    );
+    Verify all rows have is_redacted=false (implicitly, since RPC filters them).
+
+================================================================================
+END OF 06_RAG_Retrieval_and_Hybrid_Search.txt
+================================================================================

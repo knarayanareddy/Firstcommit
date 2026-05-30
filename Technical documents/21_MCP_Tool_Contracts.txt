@@ -1,0 +1,131 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 21_MCP_Tool_Contracts.txt
+Purpose: Detailed specification of all MCP tools and resources, including
+         input/output schemas, auth requirements, rate limits, and output caps.
+Audience: Backend Engineers, AI Integration Engineers, Security
+Last Updated: 2026-03-20
+Source-of-truth file paths:
+  - supabase/functions/rocketboard-mcp/index.ts
+  - supabase/functions/rocketboard-mcp/tools/
+  - supabase/functions/rocketboard-mcp/resources/
+================================================================================
+
+1. OVERVIEW
+-----------
+The `rocketboard-mcp` Edge Function exposes 10 tools and 3 resource tools via the
+mcp-lite Streamable HTTP transport. All tools require a valid Supabase JWT in the
+Authorization header. Pack-scoped tools additionally require 'learner' access or 
+higher on the target `pack_id`.
+
+2. TOOL CONTRACTS
+-----------------
+
+2.1 list_my_packs
+    - Description: Lists all packs the user has access to.
+    - Auth: Any authenticated user.
+    - Rate Limit: 60/min.
+    - Input: {}
+    - Output: { packs: [{ pack_id, title, description, access_level, org_id }], total }
+    - Caps: Hard-capped at 200 packs.
+
+2.2 search_knowledge_base
+    - Description: Hybrid vector+keyword search for evidence spans.
+    - Auth: Learner on pack_id.
+    - Rate Limit: 60/min.
+    - Input: { pack_id, query (max 500), max_spans (1-20, default 10), module_key?, track_key? }
+    - Output: { spans: [{ span_id, chunk_id, path, start_line, end_line, snippet_preview }], total, truncated }
+    - Redaction: `snippet_preview` (max 1200 chars) passed through secret-patterns.ts.
+
+2.3 explain_with_evidence
+    - Description: Grounded AI answer from the RAG pipeline.
+    - Auth: Learner on pack_id.
+    - Rate Limit: 20/min (Compute-heavy).
+    - Input: { pack_id, question (max 2000), context? (max 8000), detective_mode?, max_spans? }
+    - Output: { answer_markdown, evidence_manifest: { citations, spans_used }, gate_outcome: { passed, reason } }
+    - Redaction: `answer_markdown` (max 12k chars) redacted via secret-patterns.ts.
+
+2.4 get_pack_conventions
+    - Description: Retrieves stitched AGENTS.md conventions.
+    - Auth: Learner on pack_id.
+    - Rate Limit: 60/min.
+    - Input: { pack_id }
+    - Output: { content, found, truncated }
+    - Caps: `content` redacted and capped at 30,000 chars.
+
+2.5 get_tech_docs_index
+    - Description: Lists paths for documents in 'Technical documents/' namespace.
+    - Auth: Learner on pack_id.
+    - Rate Limit: 60/min.
+    - Input: { pack_id }
+    - Output: { paths: [string], total }
+
+2.6 get_tech_doc
+    - Description: Retrieves full content of a technical document by path.
+    - Auth: Learner on pack_id.
+    - Rate Limit: 60/min.
+    - Input: { pack_id, path (max 300, must start with Technical documents/) }
+    - Output: { content, found, truncated, path }
+    - Validation: Path traversal (../) and absolute paths are blocked.
+    - Caps: `content` redacted and capped at 50,000 chars.
+
+2.7 report_content_gap
+    - Description: Report stale or missing documentation to pack authors.
+    - Auth: Learner on pack_id.
+    - Rate Limit: 10/day per user/pack.
+    - Input: { pack_id, title (max 200), description (max 2000), file_path?, symbol?, severity? }
+    - Output: { reported: boolean }
+    - Audit: Invocations tracked in `mcp_audit_events`.
+
+2.8 list_pack_sources
+    - Description: Lists all defined sources (repos, URLs, etc.) in a pack.
+    - Auth: Learner on pack_id.
+    - Rate Limit: 60/min.
+    - Input: { pack_id }
+    - Output: { sources: [{ id, type, label, uri, last_synced_at }] }
+
+2.9 find_references
+    - Description: Graph-based lookup of symbol references.
+    - Auth: Learner on pack_id.
+    - Rate Limit: 60/min.
+    - Input: { pack_id, symbol (max 200) }
+    - Output: { symbol, references: [{ path, line_start, line_end, chunk_id }] }
+    - DB: Calls `find_references_v1` RPC using `symbol_references` table (Graph v2).
+
+3. RESOURCE TOOLS (rocketboard://)
+----------------------------------
+Resource tools follow a URI-based pattern but are exposed as Standard Tools for
+compatibility.
+
+3.1 get_resource_pack_agents
+    - URI Pattern: rocketboard://pack/<id>/agents
+    - Same behavior as `get_pack_conventions`.
+
+3.2 get_resource_techdocs_index
+    - URI Pattern: rocketboard://pack/<id>/techdocs/index
+    - Same behavior as `get_tech_docs_index`.
+
+3.3 get_resource_techdoc
+    - URI Pattern: rocketboard://pack/<id>/techdocs/<name>
+    - Retrieves a document by slug/name. Same behavior as `get_tech_doc`.
+
+4. STATUS & ERROR CODES
+-----------------------
+- 400 Bad Request: `invalid_inputs` (Zod failure) or `invalid_path` (Anti-traversal).
+- 401 Unauthorized: `auth_required` (Missing/malformed JWT).
+- 403 Forbidden: `pack_access_denied` (Insufficient RBAC/RLS).
+- 429 Too Many Requests: `rate_limited`.
+- 500 Internal Error: Genericized message; stack traces redacted.
+
+5. HOW TO TEST
+--------------
+- Use the `scripts/mcp-smoke-test.ts` for automated validation.
+- Smoke tests enforce:
+  - Required auth rejection.
+  - Zero-citation rejection in explain_with_evidence (grounding gate).
+  - Directory traversal blocking in get_tech_doc.
+  - Redaction check on search snippets.
+
+================================================================================
+END OF 21_MCP_Tool_Contracts.txt
+================================================================================

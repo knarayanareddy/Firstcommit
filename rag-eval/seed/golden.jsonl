@@ -1,0 +1,5 @@
+{"id":"g1","query":"How are BYOK API keys encrypted at rest?","expect_source_contains":["user_ai_settings"],"min_citations":1,"min_faithfulness":0.6,"must_not_hallucinate":true}
+{"id":"g2","query":"How does the system prevent SSRF when ingesting a URL?","expect_source_contains":["external-url-policy"],"min_citations":1,"min_faithfulness":0.6,"must_not_hallucinate":true}
+{"id":"g3","query":"What happens when the grounding gate finds no evidence?","expect_source_contains":["grounding-gate"],"min_citations":1,"min_faithfulness":0.6,"must_not_hallucinate":true}
+{"id":"g4","query":"How is a GitHub webhook request authenticated?","expect_source_contains":["github-webhook","signature-policy"],"min_citations":1,"min_faithfulness":0.6,"must_not_hallucinate":true}
+{"id":"g5","query":"How does multi-hop detective retrieval expand the candidate set?","expect_source_contains":["detective-retrieval"],"min_citations":1,"min_faithfulness":0.6,"must_not_hallucinate":true}

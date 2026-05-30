@@ -1,0 +1,254 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 10_Ingestion_Pipeline_and_Connectors.txt
+Purpose: Complete specification of the ingestion pipeline, all connectors,
+         shared processing libraries, and security controls applied at
+         ingestion time.
+Audience: Backend Engineers, DevOps, Security
+Last Updated: 2026-04-24
+Related Code Paths:
+  - supabase/functions/ingest-source/index.ts
+  - supabase/functions/ingest-*/index.ts (all 14 connectors)
+  - supabase/functions/_shared/ast-chunker.ts
+  - supabase/functions/_shared/smart-chunker.ts
+  - supabase/functions/_shared/secret-patterns.ts
+  - supabase/functions/_shared/hash-utils.ts
+  - supabase/functions/_shared/embedding-reuse.ts
+  - supabase/functions/_shared/ingestion-guards.ts
+  - supabase/functions/_shared/credentials.ts
+================================================================================
+
+1. INGESTION DISPATCHER (ingest-source)
+-----------------------------------------
+Entry point for all ingestion. The dispatcher handles two source types natively
+and routes all others to specialized edge functions.
+
+Request Body:
+  {
+    "pack_id": "uuid",
+    "source_id": "uuid",
+    "source_type": "github_repo"|"document"|"confluence"|...,
+    "source_uri": "https://...",   // for github_repo
+    "document_content": "...",     // for document type
+    "label": "...",                // for document type
+    "source_config": {},           // non-secret settings (URLs, space keys, etc.)
+    "org_id": "uuid"
+  }
+
+Routing:
+  github_repo  → handled inline in ingest-source
+  document     → handled inline in ingest-source
+  confluence   → POST ingest-confluence
+  notion       → POST ingest-notion
+  jira         → POST ingest-jira
+  slack_channel→ POST ingest-slack
+  google_drive → POST ingest-google-drive
+  sharepoint   → POST ingest-sharepoint
+  figma        → POST ingest-figma
+  loom_video   → POST ingest-loom
+  openapi_spec → POST ingest-openapi
+  postman_collection → POST ingest-postman
+  pagerduty    → POST ingest-pagerduty
+  linear       → POST ingest-linear
+
+2. INGESTION PIPELINE (Step by Step)
+--------------------------------------
+For each source, the pipeline always follows this order:
+
+  Step 1: Guard checks (ingestion-guards.ts)
+    validateIngestion() checks:
+      - Cooldown: Has this source been ingested recently? (prevents frequent re-ingestion)
+      - Concurrency: Is this source currently being ingested? (prevents duplicate jobs)
+    checkPackChunkCap() checks:
+      - Has this pack exceeded its maximum chunk count?
+    getRunCap() defines max new chunks per run.
+
+  Step 2: Create ingestion_jobs row (status: 'processing')
+
+  Step 3: Fetch content (connector-specific)
+    For github_repo: fetchGitHubTree → fetchGitHubFile for each supported file
+    For connectors: delegate to specialized edge function
+
+  Step 4: Chunk content (per file)
+    Code files: astChunk(content, filepath) from _shared/ast-chunker.ts
+      - Produces semantically meaningful units (functions, classes, etc.)
+      - Extracts: entity_type, entity_name, signature, imports, exported_names
+      - Preserves: line_start, line_end for citation anchoring
+    
+    Document/text files: chunkWords(text, wordCount=500)
+      - Simple word-based chunking with line estimates
+    
+    Doc sources (Confluence, etc.): smartChunk() from _shared/smart-chunker.ts
+      - Heading-aware chunking (splits on H1/H2 boundaries)
+
+  Step 5: Redaction (per chunk)
+    assessChunkRedaction(rawContent) from _shared/secret-patterns.ts
+    Returns:
+      'clean' → store as-is
+      'redact_and_index' → store redacted text, is_redacted=false
+      'exclude' → store redacted text, is_redacted=true (filtered from retrieval)
+    
+    Redaction ratio threshold: 0.5 (if >50% of chunk is secrets → exclude)
+
+  Step 6: Content hash
+    Document chunk processing computes a true SHA-256 hash securely over the post-redaction 
+    content using `computeContentHash(content)`. To eliminate string-hashing bottlenecks during 
+    large document imports, this is mapped concurrently using `Promise.all` across the 
+    chunk batch (from hash-utils.ts).
+    Used for deduplication and embedding reuse.
+
+  Step 7: Batch process embeddings (embedding-reuse.ts)
+    processEmbeddingsWithReuse(supabase, pack_id, source_id, chunks, apiKey)
+    For each chunk:
+      - Check knowledge_chunks for matching content_hash
+      - If found: copy existing embedding (no API call)
+      - If not: generate via OpenAI text-embedding-3-small
+    Returns: { reusedCount, generatedCount }
+
+  Step 8: Batch upsert to knowledge_chunks
+    Batch size: 100 rows per upsert
+    onConflict: (pack_id, chunk_id) — idempotent
+    Each batch updates ingestion_jobs.processed_chunks
+
+  Step 9: Mark job completed + log metadata
+    ingestion_jobs status → 'completed'
+    metadata: { total_chunks, indexable_chunks, embeddings_reused_count,
+                embeddings_generated_count, redaction_summary, trace_id }
+
+  Operational Controls (Heartbeats & Cancellation):
+    - Heartbeat: Updates `last_heartbeat_at` every 30s to prevent stale job detection.
+    - Cancellation: Ingest loop checks `status` every 50 chunks. If 'cancelled', 
+      it stops fetching, cleans up partial data, and exits.
+
+  On failure:
+    ingestion_jobs status → 'failed' with error_message
+    DELETE knowledge_chunks WHERE ingestion_job_id = failed_job_id (cleanup)
+
+3. GITHUB CONNECTOR SPECIFICS
+--------------------------------
+  Content fetching:
+    - GitHub Trees API: GET /repos/{owner}/{repo}/git/trees/HEAD?recursive=1
+    - File content: GET /repos/{owner}/{repo}/contents/{path}
+    - Credential: getSourceCredential(supabase, source_id, 'api_token') from Vault
+      Fallback: GITHUB_TOKEN env var
+
+  File filtering (SUPPORTED_EXTENSIONS):
+    .ts, .tsx, .js, .jsx, .md, .json, .yaml, .yml, .toml, .py, .go, .rs,
+    .java, .rb, .sh, .bash, .css, .scss, .html, .sql, .graphql, .gql, .tf
+
+  Named file allowlist (SUPPORTED_FILENAMES):
+    Dockerfile, Makefile, .env.example, .env.sample, docker-compose.yml,
+    docker-compose.yaml, Jenkinsfile, README.md, README, CONTRIBUTING.md, SETUP.md
+
+  CODEOWNERS support:
+    - Parsed from GITHUB_CODEOWNERS, .github/CODEOWNERS, or docs/CODEOWNERS
+    - Rules upserted into knowledge_owners table
+    - Used for source weight and ownership attribution
+
+  Path format:
+    knowledge_chunks.path = 'repo:{owner}/{repoName}/{filepath}'
+    
+  Source URL stored in chunk metadata:
+    'https://github.com/{owner}/{repo}/blob/main/{filepath}'
+
+  Setup metadata tagging:
+    File paths matched against SETUP_PATTERNS categories:
+    dependencies, configuration, docker, ci_cd, environment, infrastructure
+    Stored in chunk metadata as { is_setup_relevant, setup_category }
+
+4. CONNECTOR PATTERN (All Other Connectors)
+---------------------------------------------
+Each connector follows the same security checklist:
+
+  a) CREDENTIALS:
+     getSourceCredential(supabase, source_id, key_name) from _shared/credentials.ts
+     Reads from Supabase Vault via RPC.
+     Never reads from pack_sources.config (that column is config, not secrets).
+
+  b) SSRF:
+     parseAndValidateExternalUrl(url, policy) MUST be called before any fetch().
+     Typical policy for API connectors:
+       { allowHttps: true, allowedHostSuffixes: ['.atlassian.net', '.notion.so', ...] }
+
+  c) NORMALIZATION:
+     Convert source content to plain text/Markdown using content-normalizers.ts.
+     Smart chunking via smart-chunker.ts for doc sources.
+     AST chunking for code sources.
+
+  d) REDACTION:
+     assessChunkRedaction() on every chunk before storing.
+
+  e) EMBEDDINGS:
+     processEmbeddingsWithReuse() — always check for content_hash match first.
+
+  f) JOB TRACKING:
+     Create ingestion_jobs row at start, update progress, mark completed or failed.
+
+  g) TELEMETRY:
+     createTrace() at start, flush() at end.
+
+5. CONNECTOR CONFIG SHAPES (Non-Secret Fields in source_config)
+-----------------------------------------------------------------
+  confluence:
+    { space_key: string, base_url: string, username: string }
+    (API token stored in Vault, not here)
+
+  notion:
+    { database_id?: string, page_id?: string }
+    (OAuth token stored in Vault)
+
+  jira:
+    { jira_url: string, project_key: string, username: string }
+    (API token stored in Vault)
+
+  github_repo:
+    source_uri contains the repo URL (validated with SSRF policy)
+
+  slack_channel:
+    { channel_id: string, team_id: string }
+    (Bot token stored in Vault)
+
+  google_drive:
+    { folder_id?: string }
+    (OAuth token stored in Vault)
+
+6. SUPPORTED EXTENSIONS AND LIMITS
+------------------------------------
+  Per-pack chunk cap: Enforced by checkPackChunkCap() in ingestion-guards.ts
+  Per-run chunk cap: getRunCap() — defines max new chunks per single ingestion run
+  Cooldown after ingestion: Enforced by validateIngestion()
+  These constants are defined in _shared/ingestion-guards.ts
+
+7. KEY INVARIANTS
+------------------
+  - Credentials are NEVER stored in pack_sources.config. Only non-secret
+    settings (URLs, space keys, usernames, IDs) go there.
+  - ALL external URLs in connector code must go through parseAndValidateExternalUrl().
+  - Chunk cleanup on failed or cancelled ingestion always uses 
+    ingestion_job_id scoping.
+  - processed_chunks tracks real-time progress, total_chunks is updated 
+    after the final fetch to ensure accuracy.
+  - processEmbeddingsWithReuse() is always called BEFORE the DB upsert to
+    ensure embeddings are populated.
+
+8. FAILURE MODES
+-----------------
+  Issue: Ingestion returns 409 Conflict
+  Cause: Cooldown period not elapsed, or concurrent job already running
+  Fix: Wait for cooldown to expire; check ingestion_jobs for stuck jobs
+  
+  Issue: Ingestion returns 413 (chunk cap exceeded)
+  Cause: Pack has too many chunks
+  Fix: Purge old/unused sources via lifecycle controls
+
+  Issue: SSRF block on connector URL
+  Cause: connector URL resolves to private IP or non-allowlisted host
+  Fix: Verify connector config URL is correct; check external-url-policy allowedHostSuffixes
+
+  Issue: Zero embeddings generated
+  Cause: OPENAI_API_KEY or LOVABLE_API_KEY not set
+  Fix: Check env vars; note that FTS search still works without vector embeddings
+
+================================================================================
+END OF 10_Ingestion_Pipeline_and_Connectors.txt
+================================================================================

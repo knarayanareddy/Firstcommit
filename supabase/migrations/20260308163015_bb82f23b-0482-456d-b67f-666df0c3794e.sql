@@ -1,0 +1,1 @@
+ALTER TABLE public.generated_modules ADD COLUMN IF NOT EXISTS contradictions jsonb DEFAULT '[]'::jsonb;
