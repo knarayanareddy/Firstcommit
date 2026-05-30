@@ -1,0 +1,71 @@
+# RocketBoard self-host add-ons: local LLM (Ollama) + the built frontend.
+#
+# Runs ALONGSIDE the official Supabase self-host bundle
+# (https://github.com/supabase/supabase/tree/master/docker), joined on an external
+# Docker network so the Supabase Edge Runtime can reach the `ollama` host.
+#
+# Quickstart (see docs/SELF_HOSTING.md for the full runbook):
+#   1) docker network create rocketboard
+#   2) git clone --depth 1 https://github.com/supabase/supabase
+#      cd supabase/docker && cp .env.example .env
+#      # add `rocketboard` (external) to the `functions` + `db` services' networks,
+#      # and set the RocketBoard env (BYOK_ENCRYPTION_PASSPHRASE, LOCAL_LLM_*, EMBEDDING_*, ...)
+#      docker compose up -d
+#   3) back in this repo:
+#      cp .env.docker.example .env && docker compose -f docker-compose.selfhost.yml up -d --build
+name: rocketboard-selfhost
+
+networks:
+  rocketboard:
+    external: true
+
+volumes:
+  ollama:
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rocketboard-ollama
+    networks: [rocketboard]
+    ports: ["11434:11434"]
+    volumes: ["ollama:/root/.ollama"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # NVIDIA GPU (optional): uncomment to accelerate inference
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: all, capabilities: ["gpu"] }]
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama: { condition: service_healthy }
+    networks: [rocketboard]
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Pulling chat model: ${DEFAULT_LLM_MODEL:-llama3}";
+        ollama pull "${DEFAULT_LLM_MODEL:-llama3}";
+        echo "Pulling embedding model: ${EMBEDDING_MODEL:-nomic-embed-text}";
+        ollama pull "${EMBEDDING_MODEL:-nomic-embed-text}";
+        echo "RocketBoard models ready.";
+    restart: "no"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # NOTE: Vite inlines VITE_* at BUILD time — they must be build args, not runtime env.
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY}
+    container_name: rocketboard-frontend
+    networks: [rocketboard]
+    ports: ["8080:80"]
+    restart: unless-stopped

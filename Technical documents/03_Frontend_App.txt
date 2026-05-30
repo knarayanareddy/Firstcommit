@@ -1,0 +1,244 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 03_Frontend_App.txt
+Purpose: React frontend architecture, routing, key components, state management,
+         API contracts, and security posture.
+Audience: Frontend Engineers, UI/UX, QA
+Last Updated: 2026-03-19
+Related Code Paths:
+  - src/App.tsx
+  - src/pages/
+  - src/components/
+  - src/hooks/
+  - src/lib/envelope-builder.ts
+  - src/lib/ai-client.ts
+  - src/lib/fetch-spans.ts
+  - src/lib/schema-validator.ts
+  - src/lib/output-schemas.ts
+  - src/integrations/supabase/client.ts
+================================================================================
+
+1. TECHNOLOGY STACK
+--------------------
+  Framework:   React 18 + TypeScript
+  Build:       Vite
+  UI Library:  shadcn/ui (Radix UI primitives + Tailwind CSS)
+  Styling:     Tailwind CSS + custom CSS (src/index.css)
+  Charts:      Recharts
+  Animation:   Framer Motion
+  Routing:     React Router v6
+  Server State: React Query (TanStack Query)
+  Date Utility: date-fns
+  Icons:       Lucide React
+
+2. ROUTING (src/App.tsx)
+--------------------------
+All routes are defined in App.tsx. Key routes:
+
+  PUBLIC:
+  /                              → Index.tsx (landing page)
+  /auth                          → AuthPage.tsx (login / magic link)
+
+  PACK-SCOPED (require auth + pack membership):
+  /packs/:packId                 → Modules.tsx (module list)
+  /packs/:packId/modules/:key    → ModuleView.tsx (full learning module + AI chat)
+  /packs/:packId/plan            → PlanPage.tsx (30-60-90 roadmap viewer)
+  /packs/:packId/roadmap         → RoadmapPage.tsx
+  /packs/:packId/roadmap/builder → RoadmapBuilder.tsx (author tool)
+  /packs/:packId/sources         → SourcesPage.tsx (ingestion management)
+  /packs/:packId/settings        → SettingsPage.tsx
+  /packs/:packId/settings/lifecycle → LifecycleSettings.tsx
+  /packs/:packId/analytics       → AnalyticsPage.tsx
+  /packs/:packId/trust           → TrustDashboard.tsx
+  /packs/:packId/trust/requests/:requestId → RequestDrilldown.tsx
+  /packs/:packId/quiz-analytics  → QuizAnalyticsPage.tsx
+  /packs/:packId/glossary        → GlossaryPage.tsx
+  /packs/:packId/faq             → FaqPage.tsx
+  /packs/:packId/feedback        → FeedbackPage.tsx
+  /packs/:packId/review          → ReviewPage.tsx (Docs-in-platform review tool)
+  /packs/:packId/members         → PackMembersPage.tsx
+  /packs/:packId/cohort          → CohortPage.tsx
+  /packs/:packId/team            → TeamPage.tsx
+  /packs/:packId/paths           → PathsPage.tsx
+  /packs/:packId/timeline        → TimelinePage.tsx
+  /templates                     → TemplatesPage.tsx
+  /templates/:id                 → TemplateDetailPage.tsx
+
+3. TASK ENVELOPE CONTRACT (src/lib/envelope-builder.ts)
+---------------------------------------------------------
+The envelope is the contract between frontend and ai-task-router.
+All AI requests are built using builder functions in envelope-builder.ts.
+
+ENVELOPE STRUCTURE:
+{
+  task: {
+    type: string,          // 'chat' | 'global_chat' | 'generate_module' | ...
+    request_id: string,    // UUIDv4 generated client-side
+    timestamp_iso: string, // ISO 8601
+  },
+  auth: {
+    actor_type: string,    // 'user' | 'anonymous'
+    user_id: string | null,
+    org_id: string | null,
+    roles: string[],
+    pack_permissions: { pack_id, access_level }
+  },
+  pack: {
+    pack_id: string,
+    pack_version: number,
+    title: string | null,
+    description: string | null,
+    language_mode: string,      // 'english' | other
+    tracks: [{track_key, title, description}]
+  },
+  context: {
+    current_module_key: string | null,
+    current_track_key: string | null,
+    output_language: string | null,
+    audience_profile: { audience, depth, glossary_density, output_language },
+    learner_profile: { role, experience_level, learning_style, framework_familiarity, tone_preference },
+    learner_state: { completed_module_keys, last_opened_module_key, last_opened_track_key },
+    author_instruction: string | null,   // max 2000 chars (hard limit in router)
+    conversation: { conversation_id, messages: [{role:'user'|'assistant', content}] },
+    ui_capabilities: { notes_enabled, quiz_enabled, quiz_shown_at_end_of_module, quiz_required_for_completion }
+  },
+  retrieval: {
+    query: string | null,
+    evidence_spans: EvidenceSpan[],   // max 50 (enforced in router)
+    detective_mode: boolean
+  },
+  inputs: {
+    module_revision: number | null,
+    existing_module: object | null,
+    module: object | null,
+    existing_template: object | null,
+    original_section_markdown: string | null
+  },
+  generation_prefs: {
+    include_mermaid_if_supported: boolean,
+    target_reading_level: string,
+    max_sections_hint: number
+  },
+  limits: { max_module_words, max_quiz_questions, max_key_takeaways },
+  expected_output_schema: {}
+}
+
+TASK TYPES (envelope.task.type):
+  - chat                 (module-scoped chat)
+  - global_chat          (pack-wide chat on landing)
+  - module_planner       (generate module list for pack)
+  - generate_module      (generate full learning module)
+  - refine_module        (revise a module with author_instruction)
+  - generate_quiz        (generate quiz for a module)
+  - generate_glossary    (generate glossary for a pack)
+  - generate_paths       (generate onboarding paths)
+  - generate_ask_lead    (generate "questions to ask your lead")
+  - simplify_section     (simplify a section for a learner)
+  - create_template      (create a module template)
+  - refine_template      (refine an existing template)
+
+4. EVIDENCE SPAN SHAPE (EvidenceSpan)
+---------------------------------------
+  {
+    span_id: string,     // 'S1', 'S2', ... assigned by retrieve-spans
+    chunk_id: string,    // UUID or chunk_id from knowledge_chunks
+    path: string,        // e.g., 'repo:owner/name/src/App.tsx'
+    text: string,        // content of the span
+    start_line?: number,
+    end_line?: number,
+    line_start?: number, // alias (robustness)
+    line_end?: number,   // alias (robustness)
+    metadata?: { entity_type, entity_name, signature }
+  }
+
+5. SOURCE_MAP SHAPE (returned by ai-task-router)
+-------------------------------------------------
+  source_map: [
+    {
+      badge: string,     // 'S1', 'S2', etc.
+      chunk_id: string,
+      path: string,
+      start: number,
+      end: number
+    }
+  ]
+
+  Used by frontend to render CitationBadge and EvidenceSpanViewer components.
+
+6. KEY FRONTEND COMPONENTS
+----------------------------
+  src/components/
+    ChatMessage.tsx          - Renders a single AI message with citation badges
+    CitationBadge.tsx        - [S#] inline badge; opens EvidenceSpanViewer
+    EvidenceSpanViewer.tsx   - Side panel showing raw evidence span content
+    ChatInput.tsx            - Message input + submit
+
+  src/components/trust/
+    LifecycleHealthPanel.tsx - Shows retention policy + audit trail
+    AiAuditLogPanel.tsx      - AI governance audit log with forensic detail modal
+
+  src/components/docs/
+    DocViewer.tsx            - Renders structured blocks (Docs-in-platform)
+    MermaidDiagram.tsx       - Renders Mermaid code from doc blocks
+
+  src/components/DashboardLayout.tsx
+    Main nav shell, sidebar, breadcrumbs
+
+  src/components/AIErrorDisplay.tsx
+    Normalizes AI error JSON into user-friendly messages
+
+7. KEY HOOKS
+-------------
+  useTrustData.ts          - useTrustSummary, useTrustTimeSeries, useLatestRequests,
+                             useIngestionSummary (for TrustDashboard)
+  useEvidenceSpans.ts      - Fetches evidence spans (calls retrieve-spans)
+  usePack.ts               - Current pack context (currentPack, packId)
+  useGeneratedModules.ts   - Module list + generation state
+  useFaqEntries.ts         - FAQ entries for a pack
+
+8. STATE MANAGEMENT
+--------------------
+  Global auth state: Supabase auth listener in App.tsx
+  Server state:      React Query (automatic caching, refetching)
+  Local UI state:    useState/useReducer in individual components
+  No Redux or Zustand in the frontend.
+
+9. SECURITY POSTURE (FRONTEND)
+---------------------------------
+  - No service role keys in frontend code. The anon key is used with Supabase Auth.
+  - citation HTML is sanitized before rendering (sanitizeHtml or DOMPurify patterns)
+  - Snippet content is rendered in code blocks, not innerHTML
+  - Author instructions capped client-side (enforced at 2000 chars in router)
+  - No tokens stored in localStorage (Supabase manages session in localStorage 
+    internally; extension uses VS Code SecretStorage)
+
+10. FAILURE MODES
+-----------------
+  Issue: retrieve-spans returns empty spans
+  Cause: No indexed chunks for this pack, embedding failed, or keyword mismatch
+  Frontend behavior: Passes empty evidence_spans to router; router will refuse
+  Fix: Check ingestion health in Trust Dashboard
+
+  Issue: 429 Too Many Requests from ai-task-router
+  Cause: Rate limit exceeded (30 req/min per user)
+  Frontend behavior: AIErrorDisplay shows rate limit message
+  Fix: Wait 60 seconds
+
+  Issue: ai-task-router returns insufficient_evidence
+  Cause: All 3 retry attempts failed grounding gate
+  Frontend behavior: User sees: "Insufficient evidence to provide a confident answer"
+  Fix: Check pack content, retry, or rephrase question
+
+11. CROSS-REFERENCES
+---------------------
+  For router details:     see 07_AI_Task_Router_and_Grounding_Pipeline.txt
+  For retrieval:          see 06_RAG_Retrieval_and_Hybrid_Search.txt
+  For Trust Console:      see 13_Trust_Quality_Console.txt
+  For Lifecycle UI:        see 17_Lifecycle_Controls_Retention_Purge_Audit.txt
+  For MCP contracts:       see 21_MCP_Tool_Contracts.txt
+  For Docs-in-platform:    see 22_Docs_In_Platform_System.txt
+  For VS Code Extension:  see 16_IDE_VSCode_Extension.txt
+
+================================================================================
+END OF 03_Frontend_App.txt
+================================================================================

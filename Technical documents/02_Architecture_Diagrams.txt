@@ -1,0 +1,231 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 02_Architecture_Diagrams.txt
+Purpose: ASCII architecture diagrams for key system flows.
+Audience: Engineers, Technical Architects
+Last Updated: 2026-03-19
+Related Code Paths:
+  - supabase/functions/ (edge functions)
+  - src/lib/envelope-builder.ts
+  - src/lib/ai-client.ts
+  - src/lib/fetch-spans.ts
+================================================================================
+
+1. HIGH-LEVEL SYSTEM DIAGRAM
+-----------------------------
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                         ROCKETBOARD PLATFORM                           │
+  │                                                                         │
+  │  ┌─────────────────┐     ┌──────────────────────────────────────────┐  │
+  │  │   React SPA      │────▶│         Supabase Cloud                   │  │
+  │  │  (Vite + TS)     │◀────│  ┌────────────┐  ┌──────────────────┐  │  │
+  │  │                  │     │  │  Postgres   │  │  Edge Functions  │  │  │
+  │  │  Pages:          │     │  │  (RLS)      │  │  (Deno Runtime)  │  │  │
+  │  │  - ModuleView    │     │  │             │  │                  │  │  │
+  │  │  - PlanPage      │     │  │  Tables:    │  │  ai-task-router  │  │  │
+  │  │  - TrustDash     │     │  │  - packs    │  │  retrieve-spans  │  │  │
+  │  │  - SourcesPage   │     │  │  - k_chunks │  │  ingest-source   │  │  │
+  │  │  - LifecycleSett │     │  │  - rag_met  │  │  purge-source    │  │  │
+  │  │  - RoadmapPage   │     │  │  - playlists│  │  lifecycle-job   │  │  │
+  │  └────────┬─────────┘     │  │  - a_audit  │  │  connectors...   │  │  │
+  │           │               │  └────────────┘  └──────────────────┘  │  │
+  │           │               └──────────────────────────────────────────┘  │
+  │           │                         ▲          │                         │
+  │           │                         │          ▼                         │
+  │  ┌────────▼─────────┐              │  ┌──────────────────┐              │
+  │  │  VS Code Ext.    │              │  │ External Services │              │
+  │  │  (Node.js WebView│              │  │                  │              │
+  │  │  Pack Picker     │──────────────┘  │ - OpenAI API     │              │
+  │  │  Explain Select. │                 │ - GitHub API      │              │
+  │  └──────────────────┘                 │ - Confluence API  │              │
+  │                                       │ - Notion API      │              │
+  │                                       │ - Langfuse (opt.) │              │
+  │                                       └──────────────────┘              │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+2. RAG PIPELINE FLOW
+---------------------
+
+  USER QUESTION
+       │
+       ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │              Frontend (React)                           │
+  │  1. fetch-spans.ts → POST retrieve-spans (pack_id, q)   │
+  │  2. envelope-builder.ts → builds task envelope          │
+  │  3. ai-client.ts → POST ai-task-router (envelope)       │
+  └────────────┬────────────────────────────────────────────┘
+               │
+               ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │         retrieve-spans Edge Function                    │
+  │  1. JWT auth → Supabase Auth.getUser()                  │
+  │  2. Pack membership check (pack_members table)          │
+  │  3. Generate embedding (OpenAI text-embedding-3-small)  │
+  │  4. RPC: hybrid_search_v2(pack_id, query, embedding)    │
+  │     → Postgres: pgvector cosine + ts_rank FTS merge     │
+  │  5. Return: [{span_id, path, text, start_line, end_line}]│
+  └────────────┬────────────────────────────────────────────┘
+               │ evidence spans
+               ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │         ai-task-router Edge Function                    │
+  │                                                         │
+  │  pre-flight:                                            │
+  │  ├─ JWT auth + rate limit (30 req/min/user)             │
+  │  ├─ sanitizeInputs() — truncation caps enforced         │
+  │  └─ redactSpans() — 2nd-pass secret redaction           │
+  │                                                         │
+  │  optional: Detective Mode                               │
+  │  └─ runDetectiveRetrieval() → definition_search_v1      │
+  │                                                         │
+  │  always:                                                │
+  │  └─ batchRerankWithLLM() — LLM-based relevance sort     │
+  │                                                         │
+  │  agentic loop (up to 3 attempts):                       │
+  │  ┌──────────────────────────────────────────────────┐   │
+  │  │ 1. Build system prompt + evidence spans block    │   │
+  │  │ 2. Call AI provider (OpenAI-compatible API)      │   │
+  │  │ 3. enforceNoDirectCode() — block raw code fences │   │
+  │  │ 4. verifyClaims()   — strip uncited claims       │   │
+  │  │ 5. resolveSnippets()  — hydrate [SNIPPET] tags   │   │
+  │  │ 6. canonicalizeCitations() → source_map, badges  │   │
+  │  │ 7. evaluateGroundingGate() → ok / retry / refuse  │   │
+  │  │    if retry: append STRICT RETRY DIRECTIVE       │   │
+  │  │    if refuse: return insufficient_evidence error │   │
+  │  └──────────────────────────────────────────────────┘   │
+  │                                                         │
+  │  post-flight:                                           │
+  │  ├─ recordRagMetrics() — insert into rag_metrics        │
+  │  ├─ recordAiAudit()   — insert into ai_audit_events     │
+  │  └─ trace.flush()     — send to Langfuse (if enabled)   │
+  └────────────────────────────────────────────────────────-┘
+               │ JSON response
+               ▼
+  Frontend renders:
+  - display_response (HTML with [S1] badge spans)
+  - source_map [{badge, chunk_id, path, start, end}]
+  - CitationBadge + EvidenceSpanViewer components
+
+3. INGESTION PIPELINE FLOW
+---------------------------
+
+  AUTHOR CONNECTS SOURCE
+         │
+         ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │  SourcesPage.tsx → POST ingest-source                   │
+  │  Body: {pack_id, source_id, source_type, source_uri,    │
+  │          source_config, org_id}                         │
+  └────────────┬────────────────────────────────────────────┘
+               │
+               ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │         ingest-source Edge Function (Dispatcher)         │
+  │                                                         │
+  │  1. validateIngestion() — cooldown + concurrency check  │
+  │  2. checkPackChunkCap() — per-pack chunk limit check    │
+  │  3. Create ingestion_jobs row (status: processing)      │
+  │                                                         │
+  │  source_type routing:                                   │
+  │  ├─ github_repo → inline GitHub fetching + AST chunking │
+  │  ├─ document    → inline word chunking                  │
+  │  └─ all others  → HTTP invoke ingest-{source_type}      │
+  │                                                         │
+  │  for each chunk:                                        │
+  │  ├─ assessChunkRedaction() — secret detection + action  │
+  │  ├─ computeContentHash()  — SHA256 (deduplication key) │
+  │  └─ store in allChunks[]                               │
+  │                                                         │
+  │  processEmbeddingsWithReuse():                          │
+  │  ├─ check knowledge_chunks for matching content_hash    │
+  │  ├─ if found: reuse existing embedding                  │
+  │  └─ if not: generate via OpenAI embeddings API         │
+  │                                                         │
+  │  batch upsert → knowledge_chunks (100 rows/batch)      │
+  │  mark ingestion_jobs as completed                       │
+  │  partial fail cleanup → delete chunks for failed job   │
+  └────────────────────────────────────────────────────────-┘
+
+4. DETECTIVE LOOP (MULTI-HOP) FLOW
+------------------------------------
+
+  Initial spans from hybrid_search_v2
+         │
+         ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  runDetectiveRetrieval()                                 │
+  │                                                          │
+  │  Hop 0: Use initial spans (or fetch if empty)            │
+  │                                                          │
+  │  Hop 1 Loop (max 1 hop in v1, cap: 5s):                  │
+  │  ┌───────────────────────────────────────────────────┐   │
+  │  │ 1. batchRerankWithLLM() → top-8 for symbol scan  │   │
+  │  │ 2. extractCandidateSymbols():                     │   │
+  │  │    - entity_name from chunk metadata (weight: 10) │   │
+  │  │    - exported_names from DB (weight: 5)           │   │
+  │  │    - imports from DB (weight: 3)                  │   │
+  │  │    - dictionary extraction from text (weight: 1-2)│   │
+  │  │ 3. RPC definition_search_v1(pack_id, symbols[])   │   │
+  │  │    → finds chunks where entity_name IN symbols    │   │
+  │  │    → or entity_name ILIKE ANY(symbols)            │   │
+  │  │ 4. Dedupe + append new spans (cap: 25 total)      │   │
+  │  └───────────────────────────────────────────────────┘   │
+  │                                                          │
+  │  Final: batchRerankWithLLM() on expanded set             │
+  │  Renumber spans S1..Sn                                   │
+  │  Return: {finalSpans, metrics}                           │
+  └──────────────────────────────────────────────────────────┘
+
+5. LIFECYCLE CONTROLS FLOW
+--------------------------
+
+  AUTHOR: Purge Source
+         │
+         ▼
+  ┌────────────────────────────────────────┐
+  │ LifecycleSettings.tsx                   │
+  │ → POST purge-source edge function       │
+  │   {pack_id, source_id, dry_run}         │
+  └──────────────┬─────────────────────────┘
+                 │
+                 ▼
+  ┌────────────────────────────────────────┐
+  │ purge-source Edge Function              │
+  │ 1. Verify author RBAC                   │
+  │ 2. dry_run: count rows affected         │
+  │ 3. execute: RPC purge_source_v1()       │
+  │    - DELETE knowledge_chunks            │
+  │    - DELETE ingestion_jobs              │
+  │    - UPDATE pack_sources.last_synced_at │
+  │ 4. INSERT lifecycle_audit_events        │
+  └────────────────────────────────────────┘
+
+  CRON: Retention Cleanup (lifecycle-retention-job)
+         │
+         ▼
+  ┌────────────────────────────────────────────────────┐
+  │ lifecycle-retention-job Edge Function (cron)        │
+  │ Triggered by: CRON_AUTH_TOKEN bearer                │
+  │ 1. Fetch all packs + pack_lifecycle_policies        │
+  │ 2. Skip if legal_hold = true                        │
+  │ 3. Delete rag_metrics older than retention_rag_days │
+  │ 4. Delete ingestion_jobs older than retention_jobs_d│
+  │ 5. Delete ai_audit_events older than retention_audit│
+  │ 6. INSERT lifecycle_audit_events (rows_deleted JSONB│
+  └────────────────────────────────────────────────────┘
+
+6. KEY INVARIANTS
+-----------------
+  - Source_map produced by canonicalizeCitations always gets passed to
+    recordAiAudit via the serve() handler, never bypassed.
+  - Grounding gate evaluation runs AFTER all verification steps, never before.
+  - evidence_manifest in ai_audit_events contains snapshot at response time;
+    it does not change if knowledge_chunks are later purged.
+  - Ingestion job cleanup on failure always deletes by ingestion_job_id,
+    never by pack_id alone (prevents over-deletion).
+
+================================================================================
+END OF 02_Architecture_Diagrams.txt
+================================================================================

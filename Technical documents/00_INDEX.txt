@@ -1,0 +1,159 @@
+ROCKETBOARD TECHNICAL DOCUMENTATION INDEX
+
+========================================================================
+RECOMMENDED READ ORDER
+========================================================================
+- Everyone: 01, 02, 11 (Security model basics), 23 (Engineering process)
+- Backend Engineers: 04, 05, 06, 07, 08, 10, 21, 22
+- Frontend Engineers: 03, 16, 13, 22
+- Security & AppSec: 11, 09, 17, 20, 23
+- Platform Operations: 12, 17, 18, 23
+
+========================================================================
+GLOSSARY OF KEY TERMS
+========================================================================
+- Pack: The primary boundary of isolation and curation. A collection of diverse knowledge sources representing an engineering domain.
+- Source: An upstream integration entity (e.g., a Confluence space, a GitHub repo, a Slack channel) connected to a Pack.
+- Chunk: The smallest atomic unit of knowledge ingested and embedded (stored in `knowledge_chunks` table).
+- Span: A reference to a slice of a chunk or multiple chunks used during retrieval to hydrate evidence.
+- Generation: A monotonically increasing ID marking a complete re-index or ingestion job. Used for pin/swap visibility.
+- Grounding Gate: The strictly enforced SLO that runs post-LLM generation to verify that technical claims are backed by cited Spans and strips hallucinations.
+- Detective Loop: An iterative multi-hop retrieval process (agentic loop) that rewrites queries based on intermediate evidence.
+- Symbol Graph (Graph v2): A semantic layer mapping definitions and references for deterministic code navigation (stored in `symbol_definitions`, `symbol_references`).
+- Rollup: Aggregated daily/weekly analytical data (stored in `pack_quality_daily`) used for the Trust Dashboard.
+- Internal Secret: A pre-shared key (`X-Rocketboard-Internal`) used for secure inter-function communication, deprecating Service Role keys for internal routing.
+
+========================================================================
+DOCUMENT INVENTORY (01..23)
+========================================================================
+
+01_System_Overview.txt
+- Purpose: High-level introduction to the RocketBoard zero-hallucination platform.
+- Audience: All Engineers, PMs.
+- Last Updated: 2026-03-25
+
+02_Architecture_Diagrams.txt
+- Purpose: ASCII topology diagrams for infrastructure, RAG pipeline, and ingestion.
+- Audience: All Engineers.
+- Last Updated: 2026-03-25
+
+03_Frontend_App.txt
+- Purpose: React architecture, data fetching, routing, and envelope builder constructs.
+- Audience: Frontend Engineers.
+- Last Updated: 2026-03-25
+
+04_Supabase_DB_Schema_and_RLS.txt
+- Purpose: Postgres tables, relationships, RPCs, and Row Level Security isolation rules.
+- Audience: Backend, Security.
+- Last Updated: 2026-03-25
+
+05_Edge_Functions_Index.txt
+- Purpose: Catalog and routing patterns of all Supabase Edge Functions.
+- Audience: Backend Engineers.
+- Last Updated: 2026-03-25
+
+06_RAG_Retrieval_and_Hybrid_Search.txt
+- Purpose: Search mechanics, reciprocal rank fusion (RRF), and cross-encoder logic.
+- Audience: Backend, ML/AI.
+- Last Updated: 2026-03-25
+
+07_AI_Task_Router_and_Grounding_Pipeline.txt
+- Purpose: The instruction-tuning router logic and prompt assembly.
+- Audience: Backend, ML/AI.
+- Last Updated: 2026-03-25
+
+08_Detective_Loop_MultiHop_Retrieval.txt
+- Purpose: Implementation logic for the iterative reasoning (agentic) loop.
+- Audience: Backend, ML/AI.
+- Last Updated: 2026-03-25
+
+09_Grounding_Gate_SLO_and_Refusal_Behavior.txt
+- Purpose: Explains the strict citation-verification pipeline and hallucination rejection heuristics.
+- Audience: ML/AI, Security, Product.
+- Last Updated: 2026-03-25
+
+10_Ingestion_Pipeline_and_Connectors.txt
+- Purpose: Details on the generic sync framework, chunking, and embedding creation.
+- Audience: Backend Engineers.
+- Last Updated: 2026-03-25
+
+11_Security_Model_SSRF_Secrets_Credentials_BYOK.txt
+- Purpose: Threat models and mandatory defensive postures for ingestion and retrieval.
+- Audience: AppSec, Backend, Ops.
+- Last Updated: 2026-03-25
+
+12_Observability_Telemetry_RAG_Metrics_Rollups.txt
+- Purpose: Trace collection, DB storage rules, and rollup cron jobs.
+- Audience: Ops, Backend.
+- Last Updated: 2026-03-25
+
+13_Trust_Quality_Console.txt
+- Purpose: Explanation of the internal dashboard used by authors to gauge RAG performance.
+- Audience: Frontend, Ops.
+- Last Updated: 2026-03-25
+
+14_RAG_Regression_Test_Harness_CI.txt
+- Purpose: Methodology for establishing evals and preventing grounding regressions.
+- Audience: ML/AI, QA.
+- Last Updated: 2026-03-25
+
+15_Roadmaps_Playlists_30_60_90.txt
+- Purpose: Business logic behind the scoped onboarding progression tracks.
+- Audience: Backend, Frontend.
+- Last Updated: 2026-03-25
+
+16_IDE_VSCode_Extension.txt
+- Purpose: Architecture of the local VS Code environment, QuickPick, and WebView routing.
+- Audience: Frontend, Integrations.
+- Last Updated: 2026-03-25
+
+17_Lifecycle_Controls_Retention_Purge_Audit.txt
+- Purpose: Governance over chunk purging, legal holds, and data deletion audits.
+- Audience: Security, Legal, Ops.
+- Last Updated: 2026-03-25
+
+18_Operational_Runbooks.txt
+- Purpose: Emergency response, debugging workflows, and kill-switches.
+- Audience: Ops, On-call Engineers.
+- Last Updated: 2026-03-25
+
+19_Known_Gaps_Tech_Debt_and_Roadmap.txt
+- Purpose: Outstanding implementation gaps and future feature planning.
+- Audience: All Engineers, PMs.
+- Last Updated: 2026-03-25
+
+20_MCP_Server_Technical_Documentation.txt
+- Purpose: Deep technical documentation for the MCP Server runtime and security posture.
+- Audience: Backend, Security, Agent Developers.
+- Last Updated: 2026-03-25
+
+21_MCP_Tool_Contracts.txt
+- Purpose: Exact JSON-RPC contracts for all 13 model-native tools.
+- Audience: Backend, Agent Developers.
+- Last Updated: 2026-03-25
+
+22_Docs_In_Platform_System.txt
+- Purpose: Technical specification of the native repository-documentation sync and block-rendering system.
+- Audience: Fullstack Engineers.
+- Last Updated: 2026-03-25
+
+23_Engineering_Process_QA_and_Release_Gates.txt
+- Purpose: Standardized PR workflows, QA index, and mandatory release gates.
+- Audience: All Engineers, Security.
+- Last Updated: 2026-03-25
+
+24_Doc_Change_Report.txt
+- Purpose: Audit and quantification of the documentation restoration and enhancement process.
+- Audience: Authors, Engineering Lead.
+- Last Updated: 2026-03-25
+
+25_Doc_Integrity_Verification_Report.txt
+- Purpose: Results of the automated documentation verification scripts.
+- Audience: Engineering Lead, CI.
+- Last Updated: 2026-03-25
+
+26_Deno_2_Migration_and_Runtime_Standards.txt
+- Purpose: Technical guide for the Deno 2.0 runtime migration and configuration standards.
+- Audience: Backend Engineers, DevOps.
+- Last Updated: 2026-03-25
+

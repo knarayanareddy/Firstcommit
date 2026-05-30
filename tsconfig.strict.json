@@ -1,0 +1,12 @@
+{
+  "//": "Opt-in strict typecheck for incremental cleanup. NOT used by the build. Run: npm run typecheck:strict. Tighten the codebase until this passes, then promote into tsconfig.app.json.",
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}

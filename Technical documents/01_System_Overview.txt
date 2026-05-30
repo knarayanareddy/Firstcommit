@@ -1,0 +1,197 @@
+================================================================================
+ROCKETBOARD TECHNICAL DOCUMENTATION
+File: 01_System_Overview.txt
+Purpose: High-level overview of the RocketBoard platform architecture, design
+         principles, and major subsystems.
+Audience: Engineers (all levels), Technical Architects, QA, Security
+Last Updated: 2026-03-19
+Related Code Paths:
+  - README.md
+  - src/App.tsx
+  - supabase/functions/ (all edge functions)
+  - supabase/migrations/ (all migrations)
+  - vscode-extension/
+================================================================================
+
+1. WHAT IS ROCKETBOARD
+----------------------
+RocketBoard is an AI-powered onboarding platform for software engineers. It
+allows teams to create "packs" — curated knowledge bundles from their
+repositories and documentation — that new engineers can explore via guided
+learning modules, AI-powered chat, quizzes, and structured 30-60-90 day
+onboarding plans.
+
+The core value proposition is GROUNDED AI: every AI response is anchored to
+real evidence from the codebase (citations + snippets). Hallucinations are
+prevented by a hard grounding gate that refuses or retries responses that
+fail minimum quality thresholds.
+
+2. MAJOR SUBSYSTEMS
+-------------------
+a) Frontend Application (React/TypeScript/Vite)
+   - Single-page app hosted on Lovable/Netlify
+   - Uses React Query for server state, shadcn/ui + Tailwind for UI
+   - Communicates with Supabase (DB + Auth) and Edge Functions
+
+b) Supabase Backend
+   - Postgres DB with RLS (Row Level Security) enforced at DB level
+   - Auth via Supabase Auth (email/magic link, Google OAuth)
+   - Edge Functions (Deno runtime) for all AI + ingestion logic
+
+c) RAG Pipeline & Code Graph
+   - retrieve-spans: hybrid search endpoint (vector + keyword)
+   - ai-task-router: orchestrates all AI generation tasks
+   - Grounding gate: enforces minimum citation quality threshold
+   - Detective loop: multi-hop retrieval for complex code dependencies
+   - Symbol Graph (Graph v2): stores definitions and references for 
+     deterministic impact analysis and navigation.
+   - Reranker: LLM-based reranking of evidence spans
+
+d) Ingestion Connectors (14+)
+   - ingest-source: dispatcher routing to specific connectors
+   - Connectors: github, confluence, notion, jira, slack, url, google-drive,
+     sharepoint, figma, loom, openapi, postman, pagerduty, linear
+   - All use shared chunking, redaction, embedding reuse, and SSRF validation.
+   - Active monitoring via heartbeats (30s) and support for job cancellation.
+   - Deterministic symbol extraction for Graph v2 support
+
+e) MCP Server (Model Context Protocol)
+   - rocketboard-mcp: 13 tools/resource tools for AI-native agent exploration.
+   - Allows IDE agents to query conventions, tech docs, and symbol references.
+   - See 21_MCP_Tool_Contracts.txt for full specification.
+
+f) VS Code Extension
+   - Allows engineers to query RocketBoard AI from inside their IDE
+   - Auth via Supabase session tokens
+   - Pack picker, explain selection, citation webview
+
+g) Trust/Quality Console
+   - Admin dashboard for pack authors
+   - Shows grounding pass rates, strip rates, latency
+   - Shows reported content gaps (from MCP report_content_gap tool)
+   - Shows ingestion health, lifecycle audit trail, AI governance audit log
+
+h) Docs-in-platform System
+   - sync-pack-docs: stitches and redacts long-form repository docs.
+   - Native block rendering for Mermaid diagrams, checklists, and code.
+   - See 22_Docs_In_Platform_System.txt for technical details.
+
+i) Lifecycle Controls
+   - Per-source purge via purge_source_v1 RPC
+   - Retention-based automatic cleanup (lifecycle-retention-job cron)
+   - lifecycle_audit_events table for full audit trail
+   - ai_audit_events table for AI governance audit
+
+3. DESIGN PRINCIPLES
+--------------------
+a) GROUNDED-FIRST
+   Every AI response must cite specific evidence spans. The grounding gate
+   evaluates min_score >= 0.80 and max_strip_rate <= 0.20 before returning
+   a response. If a response fails, the router retries (up to 3x) then refuses.
+
+b) RLS-FIRST
+   All multi-tenant data is protected by PostgreSQL Row Level Security.
+   Service role keys are ONLY used in Edge Functions, never returned to clients.
+   Pack membership and role are checked before any data operation.
+
+c) DEFENSE-IN-DEPTH (Secrets/Redaction)
+   - Ingestion: primary redaction gate (assessChunkRedaction in secret-patterns.ts)
+   - Retrieval: second-pass redaction on evidence spans before sending to AI
+   - Router: checks for redaction warnings, adds them to response
+
+d) SSRF PREVENTION
+   All external URLs derived from user config or connector settings must pass
+   parseAndValidateExternalUrl() before any fetch() call. Rejects: localhost,
+   private IP ranges, link-local, non-https, raw IP literals, non-standard ports.
+
+e) FAIL-SAFE LOGGING
+   Telemetry and audit recording always run AFTER the response is constructed.
+   A failure in recordAiAudit or recordRagMetrics never blocks the user response.
+
+f) BOUNDED INPUTS
+   Hard limits enforced in sanitizeInputs():
+   - author_instruction: max 2000 chars (HARD REJECT if exceeded)
+   - evidence_spans: max 50 spans (truncated if exceeded)
+   - Total evidence text: max 100k chars
+   - conversation history: max 20 messages
+   - query text: max 500 chars (in retrieve-spans)
+
+4. REQUEST LIFECYCLE (HAPPY PATH - CHAT)
+-----------------------------------------
+1.  User asks a question in the chat UI (ModuleView.tsx / Index.tsx)
+2.  Frontend calls retrieve-spans edge function with pack_id + query (supports Graph v2 lookup)
+3.  retrieve-spans:
+    a. Validates JWT (Supabase Auth)
+    b. Checks pack membership (pack_members table)
+    c. Generates embedding via OpenAI text-embedding-3-small
+    d. Calls hybrid_search_v2 RPC (default threshold 0.5, supporting 0.3)
+    e. Returns evidence spans [{span_id, path, text, start_line, end_line}]
+4.  Frontend builds an envelope (envelope-builder.ts) with task, pack, context,
+    retrieval (evidence spans), conversation history, limits
+5.  Frontend calls ai-task-router edge function with the envelope
+6.  ai-task-router:
+    a. Validates JWT + rate limit (30 req/min per user)
+    b. Sanitizes + truncates inputs
+    c. Redacts secrets from evidence spans (second pass)
+    d. Optional: detective mode → runDetectiveRetrieval for multi-hop expansion
+    e. Reranks spans with batchRerankWithLLM
+    f. Calls callWithAgenticReview (up to 3 attempts):
+       i.  Build system prompt with spans + grounding rules
+       ii. Call AI provider (Lovable API / OpenAI compatible)
+       iii. Run verification steps: enforceNoDirectCode, verifyClaims,
+            resolveSnippets, canonicalizeCitations
+       iv. Evaluate grounding gate (evaluateGroundingGate)
+       v.  If fails: append retry directive + retry
+       vi. If max attempts exceeded: return insufficient_evidence error
+    g. Calls recordRagMetrics (non-blocking)
+    h. Calls recordAiAudit (non-blocking)
+    i. Flushes telemetry trace
+7.  Frontend renders response with interactive citation badges [S1], [S2],
+    snippet blocks, and source map
+
+5. KEY ENVIRONMENT VARIABLES (NAMES ONLY - NEVER VALUES)
+---------------------------------------------------------
+  SUPABASE_URL                  - Supabase project REST endpoint
+  SUPABASE_ANON_KEY             - Public anon key for client auth
+  SUPABASE_SERVICE_ROLE_KEY     - Service role key (Edge Functions only)
+  OPENAI_API_KEY                - OpenAI embeddings + optional AI provider
+  LOVABLE_API_KEY               - Primary AI provider (OpenAI-compatible)
+  LANGFUSE_PUBLIC_KEY           - Langfuse observability (optional)
+  LANGFUSE_SECRET_KEY           - Langfuse observability (optional)
+  LANGFUSE_BASE_URL             - Langfuse instance URL (optional)
+  LANGFUSE_SAMPLE_RATE          - Trace sampling rate 0.0-1.0 (default: 1.0)
+  GROUNDING_MIN_SCORE           - Min grounding score (default: 0.80)
+  STRIP_RATE_MAX                - Max allowed strip rate (default: 0.20)
+  MIN_CITATIONS                 - Min citations required (default: 1)
+  MAX_UNVERIFIED_CLAIMS         - Max unverified claims (default: 0)
+  GROUNDING_GATE_MODE           - 'retry_then_refuse'|'refuse'|'off' (default: retry_then_refuse)
+  GROUNDING_GATE_APPLIES_TO_TASKS - CSV task types (default: chat,global_chat,generate_module,refine_module,generate_quiz)
+  CRON_AUTH_TOKEN               - Auth token for lifecycle-retention-job cron
+  ALLOWED_ORIGINS               - CORS origin allowlist for retrieve-spans
+  GITHUB_APP_ID                 - GitHub App credentials for connector
+  GITHUB_PRIVATE_KEY            - GitHub App private key (PEM)
+
+6. TECHNOLOGY STACK SUMMARY
+----------------------------
+  Frontend:   React 18, TypeScript, Vite, shadcn/ui, Tailwind, React Query,
+              Recharts, Framer Motion, React Router v6, date-fns
+  Backend:    Supabase (Postgres 15, Auth, Edge Functions on Deno)
+  AI:         OpenAI API (or compatible), text-embedding-3-small for embeddings
+  Observability: Langfuse (optional, falls back to console logging)
+  Extension:  VS Code Extension API (Node.js), webview with vanilla HTML/CSS/JS
+
+7. CROSS-REFERENCES
+-------------------
+  For database schema details: see 04_Supabase_DB_Schema_and_RLS.txt
+  For RAG pipeline details:    see 06_RAG_Retrieval_and_Hybrid_Search.txt
+  For AI router details:       see 07_AI_Task_Router_and_Grounding_Pipeline.txt
+  For security details:        see 11_Security_Model_SSRF_Secrets_Credentials_BYOK.txt
+  For ingestion:               see 10_Ingestion_Pipeline_and_Connectors.txt
+  For lifecycle controls:      see 17_Lifecycle_Controls_Retention_Purge_Audit.txt
+  For MCP contracts:           see 21_MCP_Tool_Contracts.txt
+  For Docs-in-platform:        see 22_Docs_In_Platform_System.txt
+  For process gates:           see 23_Engineering_Process_QA_and_Release_Gates.txt
+
+================================================================================
+END OF 01_System_Overview.txt
+================================================================================
