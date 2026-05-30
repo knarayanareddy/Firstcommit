@@ -5,19 +5,26 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
+  buildSpansBlock,
+  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildLimitsConstraintBlock,
   buildMermaidBlock,
-  buildPackBlock,
-  buildSpansBlock,
+  buildLimitsConstraintBlock,
 } from "./prompts.ts";
 import {
-  type AIConfig,
-  callAI,
-  parseAIJson,
+  errorResponse,
+  structuredError,
+  jsonResponse,
+  unsupportedTask,
+} from "./responses.ts";
+import { authenticateRequest, checkPackAccess } from "./auth.ts";
+import {
   PROVIDER_ENDPOINTS,
   resolveAIConfig,
+  callAI,
+  parseAIJson,
+  type AIConfig,
 } from "./ai-call.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
@@ -243,52 +250,10 @@ GROUNDING RULES (STRICT NO-HALLUCINATION CONTRACT):
 `;
 
 // ─── HELPERS ───
-function errorResponse(
-  status: number,
-  body: object,
-  headers: Record<string, string>,
-) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...headers, "Content-Type": "application/json" },
-  });
-}
-
-function structuredError(
-  requestId: string,
-  errorCode: string,
-  message: string,
-  headers: Record<string, string>,
-  extra?: { suggested_search_queries?: string[]; warnings?: string[] },
-) {
-  return jsonResponse({
-    type: "error",
-    request_id: requestId,
-    error_code: errorCode,
-    message,
-    suggested_search_queries: extra?.suggested_search_queries || [],
-    warnings: extra?.warnings || [],
-  }, headers);
-}
-
-function jsonResponse(body: object, headers: Record<string, string>) {
-  return json(200, body, headers);
-}
-
-function unsupportedTask(
-  requestId: string,
-  taskType: string,
-  headers: Record<string, string>,
-) {
-  return structuredError(
-    requestId,
-    "unsupported_task",
-    `Task type '${taskType}' not yet implemented`,
-    headers,
-  );
-}
+// Response builders moved to ./responses.ts (stage 3a).
 
 // buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
+
 
 async function quickVerifyCitations(
   content: string,
@@ -326,6 +291,7 @@ async function quickVerifyCitations(
 }
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
+
 
 // BYOK config + resolveAIConfig moved to ./ai-call.ts (monolith split, stage 2a).
 
@@ -461,78 +427,7 @@ async function callWithAgenticReview(
   };
 }
 
-async function authenticateRequest(
-  req: Request,
-  headers: Record<string, string>,
-): Promise<{ userId: string }> {
-  const { userId } = await requireUser(req, headers);
-  return { userId };
-}
-
-// ─── PACK ACCESS AUTHORIZATION ───
-const AUTHOR_TASKS = new Set([
-  "generate_module",
-  "refine_module",
-  "generate_quiz",
-  "generate_glossary",
-  "generate_paths",
-  "generate_ask_lead",
-  "create_template",
-  "refine_template",
-  "module_planner",
-  "generate_exercises",
-]);
-
-async function checkPackAccess(
-  userId: string,
-  envelope: any,
-  headers: Record<string, string>,
-): Promise<Response | null> {
-  const packId = envelope.pack?.pack_id;
-  const taskType = envelope.task?.type;
-  const requestId = envelope.task?.request_id || "unknown";
-
-  if (!packId) return null; // Some tasks may not need a pack
-
-  try {
-    const supabase = createServiceClient();
-
-    const minLevel = AUTHOR_TASKS.has(taskType) ? "author" : "learner";
-    const { data: hasAccess, error } = await supabase.rpc("has_pack_access", {
-      _user_id: userId,
-      _pack_id: packId,
-      _min_level: minLevel,
-    });
-
-    if (error) {
-      console.error("[checkPackAccess] Supabase RPC error:", error);
-      return structuredError(
-        requestId,
-        "authz_error",
-        "Failed to verify pack access due to database error.",
-        headers,
-      );
-    }
-
-    if (!hasAccess) {
-      return structuredError(
-        requestId,
-        "pack_access_denied",
-        "You do not have permission to access this onboarding pack.",
-        headers,
-      );
-    }
-    return null;
-  } catch (e: any) {
-    console.error("[checkPackAccess] error:", e);
-    return structuredError(
-      requestId,
-      "authz_error",
-      "Failed to verify pack access.",
-      headers,
-    );
-  }
-}
+// authenticateRequest + checkPackAccess moved to ./auth.ts (stage 3a).
 
 async function recordRagMetrics(trace: TraceBuilder, envelope: any) {
   try {
