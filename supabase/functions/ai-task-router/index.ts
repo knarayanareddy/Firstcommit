@@ -5,14 +5,18 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
-  buildSpansBlock,
-  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildMermaidBlock,
   buildLimitsConstraintBlock,
+  buildMermaidBlock,
+  buildPackBlock,
+  buildSpansBlock,
 } from "./prompts.ts";
-import { PROVIDER_ENDPOINTS, resolveAIConfig, type AIConfig } from "./ai-call.ts";
+import {
+  type AIConfig,
+  PROVIDER_ENDPOINTS,
+  resolveAIConfig,
+} from "./ai-call.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
 import {
@@ -284,7 +288,6 @@ function unsupportedTask(
 
 // buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
 
-
 async function quickVerifyCitations(
   content: string,
   spans: any[],
@@ -322,12 +325,12 @@ async function quickVerifyCitations(
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
 
-
 // BYOK config + resolveAIConfig moved to ./ai-call.ts (monolith split, stage 2a).
 
 // ─── AI CALL ABSTRACTION ───
 // Default if not passed in via config
-const AI_MODEL = Deno.env.get("DEFAULT_LLM_MODEL") || Deno.env.get("OLLAMA_MODEL") || "llama3";
+const AI_MODEL = Deno.env.get("DEFAULT_LLM_MODEL") ||
+  Deno.env.get("OLLAMA_MODEL") || "llama3";
 
 async function callAI(
   systemPrompt: string,
@@ -409,7 +412,12 @@ async function callAI(
         "perplexity.ai",
       ],
       // Permit the configured self-hosted local LLM (private host + http handled by guard).
-      allowPrivateHosts: [localLlmHost, "localhost", "127.0.0.1", "host.docker.internal"],
+      allowPrivateHosts: [
+        localLlmHost,
+        "localhost",
+        "127.0.0.1",
+        "host.docker.internal",
+      ],
       disallowPrivateIPs: true,
       allowHttps: true,
     };
@@ -446,7 +454,9 @@ async function callAI(
     ) {
       const openaiKey = Deno.env.get("OPENAI_API_KEY");
       if (openaiKey) {
-        console.log("[FALLBACK] local LLM endpoint 402 → trying OpenAI directly");
+        console.log(
+          "[FALLBACK] local LLM endpoint 402 → trying OpenAI directly",
+        );
         const fallbackModel = "gpt-4o-mini"; // cost-efficient fallback
         const fallbackBody = {
           model: fallbackModel,

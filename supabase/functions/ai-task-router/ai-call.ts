@@ -44,12 +44,19 @@ export const PROVIDER_ENDPOINTS: Record<
   together: { url: "https://api.together.xyz/v1/chat/completions" },
   sambanova: { url: "https://api.sambanova.ai/v1/chat/completions" },
   cerebras: { url: "https://api.cerebras.ai/v1/chat/completions" },
-  ollama: { url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions" },
-  local: { url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions" },
+  ollama: {
+    url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+      "/chat/completions",
+  },
+  local: {
+    url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+      "/chat/completions",
+  },
   // De-Lovable: default is now the configured self-hosted/local OpenAI-compatible endpoint.
   default: {
     url: Deno.env.get("DEFAULT_LLM_ENDPOINT") ||
-      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions",
+      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+        "/chat/completions",
   },
 };
 
