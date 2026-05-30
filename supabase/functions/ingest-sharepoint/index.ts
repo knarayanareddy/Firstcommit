@@ -1,4 +1,4 @@
-import mammoth from "https://esm.sh/mammoth@1.6.0";
+import * as mammoth from "https://esm.sh/mammoth@1.6.0";
 import { assessChunkRedaction } from "../_shared/secret-patterns.ts";
 import { parseAndValidateExternalUrl } from "../_shared/external-url-policy.ts";
 import {
