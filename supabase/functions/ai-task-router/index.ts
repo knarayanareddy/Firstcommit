@@ -5,11 +5,12 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
+  buildSpansBlock,
+  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildLimitsConstraintBlock,
   buildMermaidBlock,
-  buildPackBlock,
+  buildLimitsConstraintBlock,
 } from "./prompts.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
@@ -280,34 +281,8 @@ function unsupportedTask(
   );
 }
 
-function buildSpansBlock(
-  spans: any[],
-): { markdown: string; allowedTokens: string[] } {
-  if (!spans?.length) return { markdown: "", allowedTokens: [] };
+// buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
 
-  const tokensSet = new Set<string>();
-  const blocks = spans.map((s: any) => {
-    const start = s.start_line ?? s.line_start ?? "?";
-    const end = s.end_line ?? s.line_end ?? "?";
-    const text = s.text ?? s.content ?? "";
-    const lang = s.path?.split(".").pop() || "ts";
-    const token = `[SOURCE: ${s.path}:${start}-${end}]`;
-    tokensSet.add(token);
-    return `${token}\n\`\`\`${lang}\n${text}\n\`\`\``;
-  });
-
-  const allowedTokens = Array.from(tokensSet);
-  const allowlistBlock = `\n### ALLOWED SOURCE TOKENS (MUST COPY EXACTLY):\n${
-    allowedTokens.map((t) => `- ${t}`).join("\n")
-  }\n`;
-
-  const markdown =
-    `\n## Evidence Spans\nUse these evidence spans to ground your answers. YOU MUST CITE EVERY CLAIM using this exact format: [SOURCE: filepath:start_line-end_line]\n${allowlistBlock}\n${
-      blocks.join("\n\n")
-    }`;
-
-  return { markdown, allowedTokens };
-}
 
 async function quickVerifyCitations(
   content: string,
@@ -345,6 +320,7 @@ async function quickVerifyCitations(
 }
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
+
 
 // ─── BYOK RESOLUTION ───
 export interface AIConfig {
@@ -385,19 +361,12 @@ const PROVIDER_ENDPOINTS: Record<
   together: { url: "https://api.together.xyz/v1/chat/completions" },
   sambanova: { url: "https://api.sambanova.ai/v1/chat/completions" },
   cerebras: { url: "https://api.cerebras.ai/v1/chat/completions" },
-  ollama: {
-    url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
-      "/chat/completions",
-  },
-  local: {
-    url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
-      "/chat/completions",
-  },
+  ollama: { url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions" },
+  local: { url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions" },
   // De-Lovable: default is now the configured self-hosted/local OpenAI-compatible endpoint.
   default: {
     url: Deno.env.get("DEFAULT_LLM_ENDPOINT") ||
-      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
-        "/chat/completions",
+      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions",
   },
 };
 
@@ -453,8 +422,7 @@ async function resolveAIConfig(userId: string): Promise<AIConfig> {
 
 // ─── AI CALL ABSTRACTION ───
 // Default if not passed in via config
-const AI_MODEL = Deno.env.get("DEFAULT_LLM_MODEL") ||
-  Deno.env.get("OLLAMA_MODEL") || "llama3";
+const AI_MODEL = Deno.env.get("DEFAULT_LLM_MODEL") || Deno.env.get("OLLAMA_MODEL") || "llama3";
 
 async function callAI(
   systemPrompt: string,
@@ -536,12 +504,7 @@ async function callAI(
         "perplexity.ai",
       ],
       // Permit the configured self-hosted local LLM (private host + http handled by guard).
-      allowPrivateHosts: [
-        localLlmHost,
-        "localhost",
-        "127.0.0.1",
-        "host.docker.internal",
-      ],
+      allowPrivateHosts: [localLlmHost, "localhost", "127.0.0.1", "host.docker.internal"],
       disallowPrivateIPs: true,
       allowHttps: true,
     };
@@ -578,9 +541,7 @@ async function callAI(
     ) {
       const openaiKey = Deno.env.get("OPENAI_API_KEY");
       if (openaiKey) {
-        console.log(
-          "[FALLBACK] local LLM endpoint 402 → trying OpenAI directly",
-        );
+        console.log("[FALLBACK] local LLM endpoint 402 → trying OpenAI directly");
         const fallbackModel = "gpt-4o-mini"; // cost-efficient fallback
         const fallbackBody = {
           model: fallbackModel,

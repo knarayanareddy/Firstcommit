@@ -103,3 +103,32 @@ export function buildLimitsConstraintBlock(limits: any): string {
     limits.max_quiz_questions || 5
   } quiz questions. These are hard limits — do not exceed them.\n`;
 }
+
+export function buildSpansBlock(
+  spans: any[],
+): { markdown: string; allowedTokens: string[] } {
+  if (!spans?.length) return { markdown: "", allowedTokens: [] };
+
+  const tokensSet = new Set<string>();
+  const blocks = spans.map((s: any) => {
+    const start = s.start_line ?? s.line_start ?? "?";
+    const end = s.end_line ?? s.line_end ?? "?";
+    const text = s.text ?? s.content ?? "";
+    const lang = s.path?.split(".").pop() || "ts";
+    const token = `[SOURCE: ${s.path}:${start}-${end}]`;
+    tokensSet.add(token);
+    return `${token}\n\`\`\`${lang}\n${text}\n\`\`\``;
+  });
+
+  const allowedTokens = Array.from(tokensSet);
+  const allowlistBlock = `\n### ALLOWED SOURCE TOKENS (MUST COPY EXACTLY):\n${
+    allowedTokens.map((t) => `- ${t}`).join("\n")
+  }\n`;
+
+  const markdown =
+    `\n## Evidence Spans\nUse these evidence spans to ground your answers. YOU MUST CITE EVERY CLAIM using this exact format: [SOURCE: filepath:start_line-end_line]\n${allowlistBlock}\n${
+      blocks.join("\n\n")
+    }`;
+
+  return { markdown, allowedTokens };
+}
