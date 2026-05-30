@@ -5,11 +5,11 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
-  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildMermaidBlock,
   buildLimitsConstraintBlock,
+  buildMermaidBlock,
+  buildPackBlock,
 } from "./prompts.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
@@ -346,7 +346,6 @@ async function quickVerifyCitations(
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
 
-
 // ─── BYOK RESOLUTION ───
 export interface AIConfig {
   provider: string;
@@ -386,12 +385,19 @@ const PROVIDER_ENDPOINTS: Record<
   together: { url: "https://api.together.xyz/v1/chat/completions" },
   sambanova: { url: "https://api.sambanova.ai/v1/chat/completions" },
   cerebras: { url: "https://api.cerebras.ai/v1/chat/completions" },
-  ollama: { url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions" },
-  local: { url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions" },
+  ollama: {
+    url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+      "/chat/completions",
+  },
+  local: {
+    url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+      "/chat/completions",
+  },
   // De-Lovable: default is now the configured self-hosted/local OpenAI-compatible endpoint.
   default: {
     url: Deno.env.get("DEFAULT_LLM_ENDPOINT") ||
-      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions",
+      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+        "/chat/completions",
   },
 };
 
@@ -447,7 +453,8 @@ async function resolveAIConfig(userId: string): Promise<AIConfig> {
 
 // ─── AI CALL ABSTRACTION ───
 // Default if not passed in via config
-const AI_MODEL = Deno.env.get("DEFAULT_LLM_MODEL") || Deno.env.get("OLLAMA_MODEL") || "llama3";
+const AI_MODEL = Deno.env.get("DEFAULT_LLM_MODEL") ||
+  Deno.env.get("OLLAMA_MODEL") || "llama3";
 
 async function callAI(
   systemPrompt: string,
@@ -529,7 +536,12 @@ async function callAI(
         "perplexity.ai",
       ],
       // Permit the configured self-hosted local LLM (private host + http handled by guard).
-      allowPrivateHosts: [localLlmHost, "localhost", "127.0.0.1", "host.docker.internal"],
+      allowPrivateHosts: [
+        localLlmHost,
+        "localhost",
+        "127.0.0.1",
+        "host.docker.internal",
+      ],
       disallowPrivateIPs: true,
       allowHttps: true,
     };
@@ -566,7 +578,9 @@ async function callAI(
     ) {
       const openaiKey = Deno.env.get("OPENAI_API_KEY");
       if (openaiKey) {
-        console.log("[FALLBACK] local LLM endpoint 402 → trying OpenAI directly");
+        console.log(
+          "[FALLBACK] local LLM endpoint 402 → trying OpenAI directly",
+        );
         const fallbackModel = "gpt-4o-mini"; // cost-efficient fallback
         const fallbackBody = {
           model: fallbackModel,
