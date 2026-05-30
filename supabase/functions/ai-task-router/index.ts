@@ -19,12 +19,7 @@ import {
   unsupportedTask,
 } from "./responses.ts";
 import { authenticateRequest, checkPackAccess } from "./auth.ts";
-import {
-  resolveGroundingPolicy,
-  quickVerifyCitations,
-  sha256,
-  buildEvidenceManifest,
-} from "./grounding.ts";
+import { resolveGroundingPolicy } from "./grounding.ts";
 import { recordRagMetrics, recordAiAudit } from "./persistence.ts";
 import {
   PROVIDER_ENDPOINTS,
@@ -123,40 +118,7 @@ function redactText(text: string): { text: string; wasRedacted: boolean } {
   return { text: result.redactedText, wasRedacted: result.secretsFound > 0 };
 }
 
-// ─── GROUNDING POLICY ───
-,
-): GroundingPolicy {
-  // Use pack settings if available, otherwise fallback to environment variables
-  const packPolicy = pack.grounding_policy || {};
-
-  const minScore = packPolicy.min_score ??
-    Number(Deno.env.get("GROUNDING_MIN_SCORE") || "0.80");
-  const maxStripRate = packPolicy.max_strip_rate ??
-    Number(Deno.env.get("STRIP_RATE_MAX") || "0.20");
-  const minCitations = packPolicy.min_citations ??
-    Number(Deno.env.get("MIN_CITATIONS") || "1");
-  const maxUnverified = packPolicy.max_unverified_claims ??
-    Number(Deno.env.get("MAX_UNVERIFIED_CLAIMS") || "0");
-  const mode = packPolicy.mode ??
-    (Deno.env.get("GROUNDING_GATE_MODE") || "retry_then_refuse");
-  const appliesToTasks = packPolicy.applies_to_tasks ??
-    (Deno.env.get("GROUNDING_GATE_APPLIES_TO_TASKS") ||
-      "chat,global_chat,generate_module,refine_module,generate_quiz");
-
-  const taskList = appliesToTasks.split(",").map((t: string) => t.trim());
-
-  // If task isn't in the list, effectively turn it off for this task
-  const finalMode = taskList.includes(taskType) ? mode : "off";
-
-  return {
-    min_score: minScore,
-    max_strip_rate: maxStripRate,
-    min_citations: minCitations,
-    max_unverified_claims: maxUnverified,
-    mode: finalMode as any,
-    applies_to_tasks: taskList,
-  };
-}
+// resolveGroundingPolicy moved to ./grounding.ts (monolith split, stage 3b).
 
 function redactSpans(spans: any[]): { spans: any[]; warnings: string[] } {
   const warnings: string[] = [];
@@ -260,37 +222,7 @@ GROUNDING RULES (STRICT NO-HALLUCINATION CONTRACT):
 // buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
 
 
-> {
-  // Use non-greedy (.+?) with a lookahead (?=:\d+-\d+\]) to stop at the LAST numeric boundary.
-  // This allows multiple [SOURCE: ...] tags on a single line even if file paths contain colons (repo:...).
-  // A greedy (.+) would consume multiple citations into a single match on the same line.
-  const citationGlobalRegex =
-    /\[SOURCE:\s*(.+?)(?=:\d+-\d+\])\s*:(\d+)-(\d+)\]/g;
-  const citationSingleRegex =
-    /\[SOURCE:\s*(.+?)(?=:\d+-\d+\])\s*:(\d+)-(\d+)\]/;
-  const citations = content.match(citationGlobalRegex) || [];
-  const warnings: string[] = [];
-  let verified = content;
-
-  for (const cit of citations) {
-    const parts = cit.match(citationSingleRegex);
-    if (!parts) continue;
-    const [_, path, start, end] = parts;
-    const exists = spans.some((s) =>
-      s.path === path &&
-      (s.line_start?.toString() === start ||
-        s.start_line?.toString() === start || start === "?")
-    );
-    if (!exists) {
-      warnings.push(`Hallucinated citation removed: ${cit}`);
-      verified = verified.replace(
-        cit,
-        "[CITATION REMOVED: source not found in retrieval]",
-      );
-    }
-  }
-  return { verified, warnings };
-}
+// quickVerifyCitations moved to ./grounding.ts (monolith split, stage 3b).
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
 
