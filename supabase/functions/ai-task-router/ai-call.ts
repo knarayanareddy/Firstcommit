@@ -10,7 +10,6 @@ import { parseAndValidateExternalUrl } from "../_shared/external-url-policy.ts";
 import { calculateCost } from "../_shared/telemetry.ts";
 import type { TraceBuilder } from "../_shared/telemetry.ts";
 
-
 export interface AIConfig {
   provider: string;
   model: string;
@@ -49,12 +48,19 @@ export const PROVIDER_ENDPOINTS: Record<
   together: { url: "https://api.together.xyz/v1/chat/completions" },
   sambanova: { url: "https://api.sambanova.ai/v1/chat/completions" },
   cerebras: { url: "https://api.cerebras.ai/v1/chat/completions" },
-  ollama: { url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions" },
-  local: { url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions" },
+  ollama: {
+    url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+      "/chat/completions",
+  },
+  local: {
+    url: (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+      "/chat/completions",
+  },
   // De-Lovable: default is now the configured self-hosted/local OpenAI-compatible endpoint.
   default: {
     url: Deno.env.get("DEFAULT_LLM_ENDPOINT") ||
-      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") + "/chat/completions",
+      (Deno.env.get("LOCAL_LLM_BASE_URL") || "http://ollama:11434/v1") +
+        "/chat/completions",
   },
 };
 
@@ -110,7 +116,8 @@ export async function resolveAIConfig(userId: string): Promise<AIConfig> {
 
 // ─── AI CALL ABSTRACTION ───
 // Default if not passed in via config
-const AI_MODEL = Deno.env.get("DEFAULT_LLM_MODEL") || Deno.env.get("OLLAMA_MODEL") || "llama3";
+const AI_MODEL = Deno.env.get("DEFAULT_LLM_MODEL") ||
+  Deno.env.get("OLLAMA_MODEL") || "llama3";
 
 export async function callAI(
   systemPrompt: string,
@@ -192,7 +199,12 @@ export async function callAI(
         "perplexity.ai",
       ],
       // Permit the configured self-hosted local LLM (private host + http handled by guard).
-      allowPrivateHosts: [localLlmHost, "localhost", "127.0.0.1", "host.docker.internal"],
+      allowPrivateHosts: [
+        localLlmHost,
+        "localhost",
+        "127.0.0.1",
+        "host.docker.internal",
+      ],
       disallowPrivateIPs: true,
       allowHttps: true,
     };
@@ -229,7 +241,9 @@ export async function callAI(
     ) {
       const openaiKey = Deno.env.get("OPENAI_API_KEY");
       if (openaiKey) {
-        console.log("[FALLBACK] local LLM endpoint 402 → trying OpenAI directly");
+        console.log(
+          "[FALLBACK] local LLM endpoint 402 → trying OpenAI directly",
+        );
         const fallbackModel = "gpt-4o-mini"; // cost-efficient fallback
         const fallbackBody = {
           model: fallbackModel,

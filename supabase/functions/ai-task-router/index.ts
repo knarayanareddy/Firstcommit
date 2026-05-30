@@ -5,19 +5,19 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
-  buildSpansBlock,
-  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildMermaidBlock,
   buildLimitsConstraintBlock,
+  buildMermaidBlock,
+  buildPackBlock,
+  buildSpansBlock,
 } from "./prompts.ts";
 import {
-  PROVIDER_ENDPOINTS,
-  resolveAIConfig,
+  type AIConfig,
   callAI,
   parseAIJson,
-  type AIConfig,
+  PROVIDER_ENDPOINTS,
+  resolveAIConfig,
 } from "./ai-call.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
@@ -290,7 +290,6 @@ function unsupportedTask(
 
 // buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
 
-
 async function quickVerifyCitations(
   content: string,
   spans: any[],
@@ -327,7 +326,6 @@ async function quickVerifyCitations(
 }
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
-
 
 // BYOK config + resolveAIConfig moved to ./ai-call.ts (monolith split, stage 2a).
 
