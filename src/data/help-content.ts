@@ -35,7 +35,7 @@ export const HELP_CATEGORY_META: Record<HelpCategory, { icon: string; label: str
   "keyboard-shortcuts": { icon: "âŒ¨ï¸�", label: "Shortcuts" },
   "whats-new": { icon: "âœ¨", label: "What's New" },
   "vs-code-extension": { icon: "ðŸ”Œ", label: "VS Code Extension" },
-  "tech-implementation": { icon: "ðŸ› ï¸�", label: "Tech Implementation" },
+  "tech-implementation": { icon: "ðŸ› ï¸�", label: "Tech Implementation" },
 };
 
 export const HELP_ARTICLES: HelpArticle[] = [
@@ -576,7 +576,7 @@ Go to the **Plan** page and click **Generate Plan**. The AI will begin mapping "
 
 [ACTION: generate_plan(Generate Plan from Sources)]
 
-:::card[Curation Tools]{ðŸ› ï¸�}
+:::card[Curation Tools]{ðŸ› ï¸�}
 - **Edit & Reorder:** Tweak titles and drag modules into the right order.
 - **Dependencies:** Set **prerequisites** to control the learner's journey.
 - **Categorization:** Assign **tracks** (e.g., Backend, Frontend) and module **templates**.
@@ -772,7 +772,7 @@ Check the **Content Health** dashboard to see which modules reference files that
 Click on a stale module to see the exact code changes that occurred in your repository compared to the content.
 :::
 
-:::step[3. AI Auto-Repair]{ðŸ› ï¸�}
+:::step[3. AI Auto-Repair]{ðŸ› ï¸�}
 Accept the **AI-Drafted Update**. Our agent reads the new code and proposes text changes to keep the module accurate.
 :::
 
@@ -850,7 +850,7 @@ You can retake any quiz multiple times. Your **most recent score** is what will 
     tags: ["exercises", "coding", "hands-on"],
     summary: "How hands-on exercises work.",
     lastUpdated: "2026-03-15",
-    content: `# Hands-On Exercises ðŸ› ï¸�
+    content: `# Hands-On Exercises ðŸ› ï¸�
 
 Put your knowledge into practice with interactive coding challenges that are reviewed by the AI in real-time.
 
@@ -866,7 +866,7 @@ Write a short explanation of how a specific function or class works. The AI veri
 Find a hidden bug or investigate how a specific environment variable affects system behavior.
 :::
 
-:::card[Hints & AI Review]{ðŸ§ }
+:::card[Hints & AI Review]{ðŸ§ }
 Stuck? Use **Progressive Hints**. When you're done, submit for an **AI Review** to get a score and personalized feedback.
 :::`,
     relatedArticles: ["learn-1", "learn-2"],
@@ -886,7 +886,7 @@ RocketBoard has two AI assistants, each grounded in your actual codebase and doc
 
 ## ðŸš€ Rocket (Module Chat)
 
-:::card[Module-Specific Intelligence]{ðŸ§ }
+:::card[Module-Specific Intelligence]{ðŸ§ }
 Rocket is available on every module page (bottom-right FAB). It answers questions about the current module's content, grounded in evidence from your connected sources.
 :::
 
@@ -983,7 +983,7 @@ Press **Cmd+K** on any page to search the glossary instantly. You don't even hav
     tags: ["review", "spaced repetition", "retention"],
     summary: "How review reminders help with long-term retention.",
     lastUpdated: "2026-03-15",
-    content: `# Spaced Repetition ðŸ§ 
+    content: `# Spaced Repetition ðŸ§ 
 
 Cement your knowledge for the long term. RocketBoard automatically schedules "Review Sessions" based on the Ebbinghaus Forgetting Curve.
 
@@ -1113,7 +1113,7 @@ Cohorts are groups of learners who started onboarding around the same time, help
 See how your peers are doing (respecting privacy settings) to gauge your own ramp-up speed.
 :::
 
-:::card[Management]{ðŸ› ï¸�}
+:::card[Management]{ðŸ› ï¸�}
 Admins can create and manage cohorts to track specific hiring classes or project teams.
 :::
 
@@ -1687,7 +1687,7 @@ The system looks for three primary "struggle signals":
 If you've been on a single section for more than **90 seconds** without marking it as read, RocketBoard will surface a small hint to help you move to the next concept.
 :::
 
-:::card[2. Chat Errors]{âš ï¸�}
+:::card[2. Chat Errors]{âš ï¸�}
 If you experience repeated technical issues with the AI chat (e.g., 2+ errors in 10 minutes), the system will offer a guided way to resolve the blockage.
 :::
 
@@ -1753,7 +1753,7 @@ Set these in **File > Preferences > Settings**:
 2. Navigate to **API Keys** and copy your token.
 3. In VS Code, run \`RocketBoard: Set token\`.
 
-## ðŸ› ï¸� Usage
+## ðŸ› ï¸� Usage
 1. **Select Pack**: Click the Status Bar item (bottom right).
 2. **Explain Code**: Highlight code and run \`RocketBoard: Explain selection\`.
 3. **Citations**: Click \`[S1]\` to jump to source code.`,
@@ -1767,7 +1767,7 @@ Set these in **File > Preferences > Settings**:
     tags: ["vscode", "maintainer", "architecture", "internals"],
     summary: "Technical deep dive into the extension's architecture, state management, and API integration.",
     lastUpdated: "2026-03-19",
-    content: `# maintainer's Guide ðŸ› ï¸�
+    content: `# maintainer's Guide ðŸ› ï¸�
 
 This document describes the technical internals of the RocketBoard VS Code extension.
 
