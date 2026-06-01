@@ -4,7 +4,11 @@
  */
 import { callAI, parseAIJson } from "../ai-call.ts";
 import { SECURITY_RULES_BLOCK } from "../generation-core.ts";
-import { buildLanguageBlock, buildLearnerProfileBlock, buildPackBlock } from "../prompts.ts";
+import {
+  buildLanguageBlock,
+  buildLearnerProfileBlock,
+  buildPackBlock,
+} from "../prompts.ts";
 import { errorResponse, jsonResponse } from "../responses.ts";
 
 export async function handleRefineTemplate(

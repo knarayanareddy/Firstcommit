@@ -3,7 +3,10 @@
  * handlers/generate-exercises.ts — `generate_exercises` task handler (monolith split, stage 4b).
  */
 import { enforceNoDirectCode } from "../envelope.ts";
-import { SECURITY_RULES_BLOCK, callWithAgenticReview } from "../generation-core.ts";
+import {
+  callWithAgenticReview,
+  SECURITY_RULES_BLOCK,
+} from "../generation-core.ts";
 import { buildPackBlock, buildSpansBlock } from "../prompts.ts";
 import { errorResponse, jsonResponse } from "../responses.ts";
 import { resolveSnippets } from "../utils/snippet-resolver.ts";
