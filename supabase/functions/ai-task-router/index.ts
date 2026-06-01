@@ -5,33 +5,33 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
+  buildSpansBlock,
+  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildLimitsConstraintBlock,
   buildMermaidBlock,
-  buildPackBlock,
-  buildSpansBlock,
+  buildLimitsConstraintBlock,
 } from "./prompts.ts";
 import {
   errorResponse,
-  jsonResponse,
   structuredError,
+  jsonResponse,
   unsupportedTask,
 } from "./responses.ts";
 import { authenticateRequest, checkPackAccess } from "./auth.ts";
 import { resolveGroundingPolicy } from "./grounding.ts";
 import {
-  callWithAgenticReview,
-  GROUNDING_RULES,
   SECURITY_RULES_BLOCK,
+  GROUNDING_RULES,
+  callWithAgenticReview,
 } from "./generation-core.ts";
-import { recordAiAudit, recordRagMetrics } from "./persistence.ts";
+import { recordRagMetrics, recordAiAudit } from "./persistence.ts";
 import {
-  type AIConfig,
-  callAI,
-  parseAIJson,
   PROVIDER_ENDPOINTS,
   resolveAIConfig,
+  callAI,
+  parseAIJson,
+  type AIConfig,
 } from "./ai-call.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
@@ -58,6 +58,9 @@ import {
 } from "../_shared/external-url-policy.ts";
 import { json, jsonError, readJson } from "../_shared/http.ts";
 import { createServiceClient } from "../_shared/supabase-clients.ts";
+
+// ─── TASK HANDLERS (monolith split, stage 4b) ───
+import { handleValidateKey } from "./handlers/validate-key.ts";
 import {
   buildSectionIndex,
   enforceNoDirectCode,
@@ -115,9 +118,11 @@ const LANGFUSE_SAMPLE_RATE = Number(
 
 // buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
 
+
 // quickVerifyCitations moved to ./grounding.ts (monolith split, stage 3b).
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
+
 
 // BYOK config + resolveAIConfig moved to ./ai-call.ts (monolith split, stage 2a).
 
@@ -2629,50 +2634,7 @@ Return ONLY the JSON object.`;
 }
 
 // ─── VALIDATE BYOK KEY ───
-async function handleValidateKey(
-  envelope: any,
-  headers: Record<string, string>,
-): Promise<Response> {
-  const { provider, api_key, model } = envelope;
-  if (!provider || !api_key) {
-    return errorResponse(
-      400,
-      { error: "Missing provider or api_key" },
-      headers,
-    );
-  }
-
-  const endpointData = PROVIDER_ENDPOINTS[provider] ||
-    PROVIDER_ENDPOINTS.openai;
-  const config: AIConfig = {
-    provider,
-    model: model || "gpt-5.3-instant", // fallback
-    endpoint: endpointData.url,
-    apiKey: api_key,
-    isCustom: true,
-    adapter: endpointData.adapter,
-  };
-
-  try {
-    // Make a minimal test call to validate
-    await callAI(
-      `You are an API key validation bot. Reply with 'valid'.`,
-      `Ping.`,
-      undefined,
-      config,
-    );
-    return jsonResponse({
-      type: "success",
-      message: "Key validated successfully",
-    }, headers);
-  } catch (e: any) {
-    console.warn("Key validation failed:", e.message, e.raw);
-    return jsonResponse({
-      type: "error",
-      message: `Key validation failed: ${e.message}`,
-    }, headers);
-  }
-}
+// handleValidateKey moved to ./handlers/validate-key.ts (monolith split, stage 4b).
 
 // ─── MAIN HANDLER ───
 Deno.serve(async (req: Request) => {
