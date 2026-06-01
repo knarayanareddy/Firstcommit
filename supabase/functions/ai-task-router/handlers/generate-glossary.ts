@@ -2,7 +2,7 @@
 /**
  * handlers/generate-glossary.ts — `generate_glossary` task handler (monolith split, stage 4b).
  */
-import type { TraceBuilder } from "../_shared/telemetry.ts";
+import type { TraceBuilder } from "../../_shared/telemetry.ts";
 import { enforceNoDirectCode } from "../envelope.ts";
 import { GROUNDING_RULES, SECURITY_RULES_BLOCK, callWithAgenticReview } from "../generation-core.ts";
 import { buildLearnerProfileBlock, buildPackBlock, buildSpansBlock } from "../prompts.ts";
