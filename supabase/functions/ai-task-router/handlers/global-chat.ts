@@ -6,8 +6,17 @@ import { createServiceClient } from "../../_shared/supabase-clients.ts";
 import type { TraceBuilder } from "../../_shared/telemetry.ts";
 import { runDetectiveRetrieval } from "../detective-retrieval.ts";
 import { buildSectionIndex, enforceNoDirectCode } from "../envelope.ts";
-import { GROUNDING_RULES, SECURITY_RULES_BLOCK, callWithAgenticReview } from "../generation-core.ts";
-import { buildLanguageBlock, buildLearnerProfileBlock, buildPackBlock, buildSpansBlock } from "../prompts.ts";
+import {
+  callWithAgenticReview,
+  GROUNDING_RULES,
+  SECURITY_RULES_BLOCK,
+} from "../generation-core.ts";
+import {
+  buildLanguageBlock,
+  buildLearnerProfileBlock,
+  buildPackBlock,
+  buildSpansBlock,
+} from "../prompts.ts";
 import { batchRerankWithLLM } from "../reranker.ts";
 import { errorResponse, jsonResponse, structuredError } from "../responses.ts";
 import { canonicalizeCitations } from "../utils/citation-mapper.ts";

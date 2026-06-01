@@ -5,33 +5,33 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
-  buildSpansBlock,
-  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildMermaidBlock,
   buildLimitsConstraintBlock,
+  buildMermaidBlock,
+  buildPackBlock,
+  buildSpansBlock,
 } from "./prompts.ts";
 import {
   errorResponse,
-  structuredError,
   jsonResponse,
+  structuredError,
   unsupportedTask,
 } from "./responses.ts";
 import { authenticateRequest, checkPackAccess } from "./auth.ts";
 import { resolveGroundingPolicy } from "./grounding.ts";
 import {
-  SECURITY_RULES_BLOCK,
-  GROUNDING_RULES,
   callWithAgenticReview,
+  GROUNDING_RULES,
+  SECURITY_RULES_BLOCK,
 } from "./generation-core.ts";
-import { recordRagMetrics, recordAiAudit } from "./persistence.ts";
+import { recordAiAudit, recordRagMetrics } from "./persistence.ts";
 import {
-  PROVIDER_ENDPOINTS,
-  resolveAIConfig,
+  type AIConfig,
   callAI,
   parseAIJson,
-  type AIConfig,
+  PROVIDER_ENDPOINTS,
+  resolveAIConfig,
 } from "./ai-call.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
@@ -132,11 +132,9 @@ const LANGFUSE_SAMPLE_RATE = Number(
 
 // buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
 
-
 // quickVerifyCitations moved to ./grounding.ts (monolith split, stage 3b).
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
-
 
 // BYOK config + resolveAIConfig moved to ./ai-call.ts (monolith split, stage 2a).
 
