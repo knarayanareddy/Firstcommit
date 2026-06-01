@@ -2,8 +2,17 @@
 /**
  * handlers/module-planner.ts — `module_planner` task handler (monolith split, stage 4b).
  */
-import { GROUNDING_RULES, SECURITY_RULES_BLOCK, callWithAgenticReview } from "../generation-core.ts";
-import { buildLanguageBlock, buildLearnerProfileBlock, buildPackBlock, buildSpansBlock } from "../prompts.ts";
+import {
+  callWithAgenticReview,
+  GROUNDING_RULES,
+  SECURITY_RULES_BLOCK,
+} from "../generation-core.ts";
+import {
+  buildLanguageBlock,
+  buildLearnerProfileBlock,
+  buildPackBlock,
+  buildSpansBlock,
+} from "../prompts.ts";
 import { batchRerankWithLLM } from "../reranker.ts";
 import { errorResponse, jsonResponse, structuredError } from "../responses.ts";
 import { resolveSnippets } from "../utils/snippet-resolver.ts";
