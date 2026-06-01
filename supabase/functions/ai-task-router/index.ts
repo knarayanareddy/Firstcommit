@@ -5,33 +5,33 @@ import { batchRerankWithLLM } from "./reranker.ts";
 import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
 import {
+  buildSpansBlock,
+  buildPackBlock,
   buildLanguageBlock,
   buildLearnerProfileBlock,
-  buildLimitsConstraintBlock,
   buildMermaidBlock,
-  buildPackBlock,
-  buildSpansBlock,
+  buildLimitsConstraintBlock,
 } from "./prompts.ts";
 import {
   errorResponse,
-  jsonResponse,
   structuredError,
+  jsonResponse,
   unsupportedTask,
 } from "./responses.ts";
 import { authenticateRequest, checkPackAccess } from "./auth.ts";
 import { resolveGroundingPolicy } from "./grounding.ts";
 import {
-  callWithAgenticReview,
-  GROUNDING_RULES,
   SECURITY_RULES_BLOCK,
+  GROUNDING_RULES,
+  callWithAgenticReview,
 } from "./generation-core.ts";
-import { recordAiAudit, recordRagMetrics } from "./persistence.ts";
+import { recordRagMetrics, recordAiAudit } from "./persistence.ts";
 import {
-  type AIConfig,
-  callAI,
-  parseAIJson,
   PROVIDER_ENDPOINTS,
   resolveAIConfig,
+  callAI,
+  parseAIJson,
+  type AIConfig,
 } from "./ai-call.ts";
 import { canonicalizeCitations } from "./utils/citation-mapper.ts";
 import { resolveSnippets } from "./utils/snippet-resolver.ts";
@@ -61,6 +61,10 @@ import { createServiceClient } from "../_shared/supabase-clients.ts";
 
 // ─── TASK HANDLERS (monolith split, stage 4b) ───
 import { handleValidateKey } from "./handlers/validate-key.ts";
+import { handleCreateTemplate } from "./handlers/create-template.ts";
+import { handleRefineTemplate } from "./handlers/refine-template.ts";
+import { handleGenerateExercises } from "./handlers/generate-exercises.ts";
+import { handleVerifyExercise } from "./handlers/verify-exercise.ts";
 import {
   buildSectionIndex,
   enforceNoDirectCode,
@@ -118,9 +122,11 @@ const LANGFUSE_SAMPLE_RATE = Number(
 
 // buildSpansBlock moved to ./prompts.ts (monolith split, stage 1b).
 
+
 // quickVerifyCitations moved to ./grounding.ts (monolith split, stage 3b).
 
 // Prompt block builders moved to ./prompts.ts (monolith split, stage 1).
+
 
 // BYOK config + resolveAIConfig moved to ./ai-call.ts (monolith split, stage 2a).
 
@@ -2167,469 +2173,16 @@ Return ONLY the JSON object. No markdown fences, no extra text.`;
 }
 
 // ─── CREATE TEMPLATE HANDLER ───
-async function handleCreateTemplate(
-  envelope: any,
-  headers: Record<string, string>,
-  extraWarnings: string[] = [],
-): Promise<Response> {
-  const requestId = envelope.task?.request_id || crypto.randomUUID();
-  const pack = envelope.pack || {};
-  const context = envelope.context || {};
-  const auth = envelope.auth || {};
-  const authorInstruction = context.author_instruction || "";
-
-  if (!authorInstruction) {
-    return errorResponse(400, {
-      type: "error",
-      request_id: requestId,
-      error_code: "missing_input",
-      message: "context.author_instruction is required for create_template",
-    });
-  }
-
-  const packBlock = buildPackBlock(pack);
-
-  const systemPrompt =
-    `You are RocketBoard AI Template Creator. You create module generation templates based on author instructions.
-${SECURITY_RULES_BLOCK}${buildLanguageBlock(context, pack)}
-TASK: Create a module template based on the author's description.
-${packBlock}
-
-RULES:
-- Generate a unique template_key (lowercase, underscores, descriptive).
-- Create a clear title and description.
-- Define trigger_rules that specify when this template should be auto-applied.
-- Write generation_instructions that guide the AI when generating modules with this template.
-- Create a section_outline with logical section ordering.
-- Define evidence_requirements specifying what evidence is needed.
-
-You MUST respond with VALID JSON matching this exact schema:
-{
-  "type": "create_template",
-  "request_id": "${requestId}",
-  "org_id": "${auth.org_id || ""}",
-  "generation_meta": { "timestamp_iso": "${
-      new Date().toISOString()
-    }", "request_id": "${requestId}" },
-  "template": {
-    "template_key": "string",
-    "title": "string",
-    "description": "string",
-    "trigger_rules": {
-      "required_signals": ["string"],
-      "path_patterns_any": ["string"],
-      "file_types_any": ["string"],
-      "repo_hints_any": ["string"]
-    },
-    "generation_instructions": "string",
-    "section_outline": [{ "section_id": "string", "heading": "string", "purpose": "string" }],
-    "evidence_requirements": [{ "requirement": "string", "why": "string" }]
-  },
-  "warnings": []
-}
-
-Return ONLY the JSON object. No markdown fences, no extra text.`;
-
-  const userPrompt =
-    `Create a module template based on this instruction: ${authorInstruction}`;
-
-  try {
-    const raw = await callAI(systemPrompt, userPrompt);
-    const parsed = parseAIJson(raw, {
-      type: "create_template",
-      request_id: requestId,
-      org_id: auth.org_id || null,
-      generation_meta: {
-        timestamp_iso: new Date().toISOString(),
-        request_id: requestId,
-      },
-      template: {
-        template_key: "default",
-        title: "Untitled Template",
-        description: "",
-        trigger_rules: {
-          required_signals: [],
-          path_patterns_any: [],
-          file_types_any: [],
-          repo_hints_any: [],
-        },
-        generation_instructions: "",
-        section_outline: [],
-        evidence_requirements: [],
-      },
-      warnings: ["AI response could not be parsed as JSON"],
-    });
-    parsed.type = "create_template";
-    parsed.request_id = requestId;
-    if (extraWarnings.length) {
-      parsed.warnings = [...(parsed.warnings || []), ...extraWarnings];
-    }
-    return jsonResponse(parsed, headers);
-  } catch (e: any) {
-    if (e.status) return errorResponse(e.status, { error: e.message }, headers);
-    throw e;
-  }
-}
+// handleCreateTemplate moved to ./handlers/create-template.ts (monolith split, stage 4b).
 
 // ─── REFINE TEMPLATE HANDLER ───
-async function handleRefineTemplate(
-  envelope: any,
-  headers: Record<string, string>,
-  extraWarnings: string[] = [],
-): Promise<Response> {
-  const requestId = envelope.task?.request_id || crypto.randomUUID();
-  const pack = envelope.pack || {};
-  const context = envelope.context || {};
-  const auth = envelope.auth || {};
-  const inputs = envelope.inputs || {};
-  const authorInstruction = context.author_instruction || "";
-  const existingTemplate = inputs.existing_template;
-
-  if (!existingTemplate) {
-    return errorResponse(400, {
-      type: "error",
-      request_id: requestId,
-      error_code: "missing_input",
-      message: "inputs.existing_template is required for refine_template",
-    });
-  }
-  if (!authorInstruction) {
-    return errorResponse(400, {
-      type: "error",
-      request_id: requestId,
-      error_code: "missing_input",
-      message: "context.author_instruction is required for refine_template",
-    });
-  }
-
-  const packBlock = buildPackBlock(pack);
-
-  const systemPrompt =
-    `You are RocketBoard AI Template Refiner. You improve existing module templates based on author feedback.
-${SECURITY_RULES_BLOCK}${buildLanguageBlock(context, pack)}${
-      buildLearnerProfileBlock(context)
-    }
-TASK: Refine this template based on the author's instruction.
-${packBlock}
-
-EXISTING TEMPLATE:
-${JSON.stringify(existingTemplate, null, 2)}
-
-AUTHOR INSTRUCTION: ${authorInstruction}
-
-RULES:
-- Apply the author's requested changes.
-- Preserve parts that weren't mentioned for change.
-- Document each change in the change_log.
-- Keep the template_key the same unless the author asks to change it.
-
-You MUST respond with VALID JSON matching this exact schema:
-{
-  "type": "refine_template",
-  "request_id": "${requestId}",
-  "org_id": "${auth.org_id || ""}",
-  "generation_meta": { "timestamp_iso": "${
-      new Date().toISOString()
-    }", "request_id": "${requestId}" },
-  "template": { same structure as create_template },
-  "change_log": [{ "change": "string", "reason": "string" }],
-  "warnings": []
-}
-
-Return ONLY the JSON object. No markdown fences, no extra text.`;
-
-  const userPrompt = `Refine this template: "${
-    existingTemplate.title || "Untitled"
-  }". Author says: ${authorInstruction}`;
-
-  try {
-    const raw = await callAI(systemPrompt, userPrompt);
-    const parsed = parseAIJson(raw, {
-      type: "refine_template",
-      request_id: requestId,
-      org_id: auth.org_id || null,
-      generation_meta: {
-        timestamp_iso: new Date().toISOString(),
-        request_id: requestId,
-      },
-      template: existingTemplate,
-      change_log: [],
-      warnings: ["AI response could not be parsed as JSON"],
-    });
-    parsed.type = "refine_template";
-    parsed.request_id = requestId;
-    if (extraWarnings.length) {
-      parsed.warnings = [...(parsed.warnings || []), ...extraWarnings];
-    }
-    return jsonResponse(parsed, headers);
-  } catch (e: any) {
-    if (e.status) return errorResponse(e.status, { error: e.message }, headers);
-    throw e;
-  }
-}
+// handleRefineTemplate moved to ./handlers/refine-template.ts (monolith split, stage 4b).
 
 // ─── GENERATE EXERCISES HANDLER ───
-async function handleGenerateExercises(
-  envelope: any,
-  headers: Record<string, string>,
-  extraWarnings: string[] = [],
-): Promise<Response> {
-  const requestId = envelope.task?.request_id || crypto.randomUUID();
-  const pack = envelope.pack || {};
-  const retrieval = envelope.retrieval || {};
-  const inputs = envelope.inputs || {};
-  const spansBlock = buildSpansBlock(retrieval.evidence_spans || []);
-  const packBlock = buildPackBlock(pack);
-
-  const systemPrompt =
-    `You are RocketBoard AI, generating hands-on exercises for developer onboarding.
-${SECURITY_RULES_BLOCK}
-${packBlock}${spansBlock}
-
-Generate 2-4 hands-on exercises for the module "${
-      inputs.module_title || inputs.module_key
-    }".
-${
-      inputs.module_description
-        ? `Module description: ${inputs.module_description}`
-        : ""
-    }
-
-Each exercise should test PRACTICAL APPLICATION of the concepts. Mix exercise types:
-- At least 1 code_find or explore_and_answer (navigation)
-- At least 1 code_explain or debug_challenge (comprehension)
-- Optionally 1 terminal_task, config_task, or free_response
-
-Exercise types: code_find, code_explain, config_task, debug_challenge, explore_and_answer, terminal_task, free_response
-Difficulties: beginner, intermediate, advanced
-
-IMPORTANT: Use ACTUAL file paths, function names, and code from the evidence spans. Reference the REAL codebase, not hypothetical examples.
-
-For each exercise, include:
-- exercise_key: unique key like "mod-key-ex-1"
-- title: clear title
-- description: markdown with full exercise prompt (include code blocks where relevant)
-- exercise_type: one of the types above
-- difficulty: beginner/intermediate/advanced
-- estimated_minutes: 5-15
-- hints: array of 2-3 progressive hints (each more specific)
-- verification: object with criteria for correct answer
-- evidence_citations: array of {span_id, path} referenced
-
-You MUST respond with VALID JSON:
-{
-  "type": "generate_exercises",
-  "request_id": "${requestId}",
-  "exercises": [
-    {
-      "exercise_key": "string",
-      "title": "string",
-      "description": "markdown string",
-      "exercise_type": "string",
-      "difficulty": "string",
-      "estimated_minutes": number,
-      "hints": ["string"],
-      "verification": {},
-      "evidence_citations": []
-    }
-  ],
-  "warnings": []
-}
-
-Return ONLY the JSON object.`;
-
-  const userPrompt = `Generate exercises for module: "${
-    inputs.module_title || inputs.module_key
-  }"`;
-
-  try {
-    const parsed = await callWithAgenticReview(
-      "generate_exercises",
-      requestId,
-      systemPrompt,
-      userPrompt,
-      retrieval.evidence_spans || [],
-      context.ai_config,
-      {
-        type: "generate_exercises",
-        request_id: requestId,
-        exercises: [],
-        warnings: ["Could not generate exercises"],
-      },
-      async (parsed) => {
-        if (!parsed.exercises) {
-          return {
-            strip_rate: 0,
-            claims_total: 0,
-            claims_stripped: 0,
-            citations_found: 0,
-            snippets_resolved: 0,
-            evidence_count: retrieval.evidence_spans?.length || 0,
-          };
-        }
-        let totalClaims = 0;
-        let totalStripped = 0;
-        let totalSnippets = 0;
-        let citationsFound = 0;
-        let allWarnings: string[] = [];
-        const evidenceSpans = retrieval.evidence_spans || [];
-
-        for (const ex of parsed.exercises) {
-          if (ex.description) {
-            const raw = ex.description;
-            const codeCleaned = enforceNoDirectCode(raw);
-            const { verifiedText, claims_total, claims_stripped } =
-              await verifyClaims(codeCleaned, evidenceSpans);
-            const { finalMarkdown, snippets_resolved } = resolveSnippets(
-              verifiedText,
-              evidenceSpans,
-            );
-
-            ex.description = finalMarkdown;
-            totalClaims += claims_total;
-            totalStripped += claims_stripped;
-            totalSnippets += snippets_resolved;
-            if (ex.evidence_citations) {
-              citationsFound += ex.evidence_citations.length;
-            }
-          }
-        }
-
-        const strip_rate = totalClaims > 0 ? totalStripped / totalClaims : 0;
-        parsed.metrics = {
-          claims_total,
-          claims_stripped,
-          strip_rate,
-          snippets_resolved: totalSnippets,
-        };
-
-        return {
-          strip_rate,
-          claims_total,
-          claims_stripped,
-          citations_found: citationsFound,
-          snippets_resolved: totalSnippets,
-          evidence_count: evidenceSpans.length,
-        };
-      },
-      trace,
-      pack,
-    );
-    if (extraWarnings.length) {
-      parsed.warnings = [...(parsed.warnings || []), ...extraWarnings];
-    }
-    return jsonResponse(parsed, headers);
-  } catch (e: any) {
-    if (e.status) return errorResponse(e.status, { error: e.message }, headers);
-    throw e;
-  }
-}
+// handleGenerateExercises moved to ./handlers/generate-exercises.ts (monolith split, stage 4b).
 
 // ─── VERIFY EXERCISE HANDLER ───
-async function handleVerifyExercise(
-  envelope: any,
-  headers: Record<string, string>,
-  extraWarnings: string[] = [],
-): Promise<Response> {
-  const requestId = envelope.task?.request_id || crypto.randomUUID();
-  const retrieval = envelope.retrieval || {};
-  const inputs = envelope.inputs || {};
-  const spansBlock = buildSpansBlock(retrieval.evidence_spans || []);
-
-  const systemPrompt =
-    `You are RocketBoard AI, evaluating a learner's exercise submission.
-${SECURITY_RULES_BLOCK}
-${spansBlock}
-
-Exercise description:
-${inputs.exercise_description}
-
-Exercise type: ${inputs.exercise_type}
-Verification criteria: ${JSON.stringify(inputs.verification_criteria || {})}
-
-Evaluate the learner's submission for accuracy and completeness.
-Be encouraging but point out anything they missed or got wrong.
-Keep feedback under 150 words.
-
-For code_find: check if submitted path matches or contains the expected path (be flexible with leading slashes/directories).
-For code_explain: evaluate explanation accuracy against the actual code in evidence.
-For config_task: check required keys exist with non-empty values. Redact secrets.
-For debug_challenge: check if they identified the correct issue and proposed a valid fix.
-For terminal_task: check output looks like expected results.
-For free_response: evaluate thoughtfulness and accuracy.
-
-You MUST respond with VALID JSON:
-{
-  "type": "verify_exercise",
-  "request_id": "${requestId}",
-  "status": "correct" | "partially_correct" | "incorrect",
-  "feedback_markdown": "your markdown feedback",
-  "score": 0-100,
-  "suggestions": ["suggestion1", "suggestion2"],
-  "warnings": []
-}
-
-Return ONLY the JSON object.`;
-
-  const userPrompt = `Learner's submission:\n\n${inputs.learner_submission}`;
-
-  try {
-    const parsed = await callWithAgenticReview(
-      "verify_exercise",
-      requestId,
-      systemPrompt,
-      userPrompt,
-      retrieval.evidence_spans || [],
-      context.ai_config,
-      {
-        type: "verify_exercise",
-        request_id: requestId,
-        status: "incorrect",
-        feedback_markdown: "Could not evaluate submission.",
-        score: 0,
-        suggestions: [],
-        warnings: [],
-      },
-      async (parsed) => {
-        const raw = parsed.feedback_markdown || "";
-        const codeCleaned = enforceNoDirectCode(raw);
-        const evidenceSpans = retrieval.evidence_spans || [];
-        const { verifiedText, claims_total, claims_stripped, strip_rate } =
-          await verifyClaims(codeCleaned, evidenceSpans);
-        const { finalMarkdown, snippets_resolved } = resolveSnippets(
-          verifiedText,
-          evidenceSpans,
-        );
-
-        parsed.feedback_markdown = finalMarkdown;
-        parsed.metrics = {
-          claims_total,
-          claims_stripped,
-          strip_rate,
-          snippets_resolved,
-        };
-
-        return {
-          strip_rate,
-          claims_total,
-          claims_stripped,
-          citations_found: 0, // Not explicitly tracked in simple feedback
-          snippets_resolved,
-          evidence_count: evidenceSpans.length,
-        };
-      },
-      trace,
-      pack,
-    );
-    if (extraWarnings.length) {
-      parsed.warnings = [...(parsed.warnings || []), ...extraWarnings];
-    }
-    return jsonResponse(parsed, headers);
-  } catch (e: any) {
-    if (e.status) return errorResponse(e.status, { error: e.message }, headers);
-    throw e;
-  }
-}
+// handleVerifyExercise moved to ./handlers/verify-exercise.ts (monolith split, stage 4b).
 
 // ─── VALIDATE BYOK KEY ───
 // handleValidateKey moved to ./handlers/validate-key.ts (monolith split, stage 4b).
