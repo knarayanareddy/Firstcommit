@@ -1,63 +1,18 @@
 // @ts-nocheck
-import { calculateCost, createTrace } from "../_shared/telemetry.ts";
+import { createTrace } from "../_shared/telemetry.ts";
 import type { TraceBuilder } from "../_shared/telemetry.ts";
-import { batchRerankWithLLM } from "./reranker.ts";
-import { verifyClaims, verifyGroundedness } from "./verifier.ts";
 import type { EvidenceSpan } from "./types.ts";
-import {
-  buildLanguageBlock,
-  buildLearnerProfileBlock,
-  buildLimitsConstraintBlock,
-  buildMermaidBlock,
-  buildPackBlock,
-  buildSpansBlock,
-} from "./prompts.ts";
-import {
-  errorResponse,
-  jsonResponse,
-  structuredError,
-  unsupportedTask,
-} from "./responses.ts";
+import { errorResponse, structuredError } from "./responses.ts";
 import { authenticateRequest, checkPackAccess } from "./auth.ts";
-import { resolveGroundingPolicy } from "./grounding.ts";
-import {
-  callWithAgenticReview,
-  GROUNDING_RULES,
-  SECURITY_RULES_BLOCK,
-} from "./generation-core.ts";
 import { recordAiAudit, recordRagMetrics } from "./persistence.ts";
-import {
-  type AIConfig,
-  callAI,
-  parseAIJson,
-  PROVIDER_ENDPOINTS,
-  resolveAIConfig,
-} from "./ai-call.ts";
-import { canonicalizeCitations } from "./utils/citation-mapper.ts";
-import { resolveSnippets } from "./utils/snippet-resolver.ts";
-import {
-  computeGroundingScore,
-  evaluateGroundingGate,
-  getRetryDirective,
-} from "./grounding-gate.ts";
-import { getInvalidCitations } from "./utils/citation-validator.ts";
-import type {
-  GroundingAttemptMetrics,
-  GroundingDecision,
-  GroundingPolicy,
-} from "./grounding-gate.ts";
+import { resolveAIConfig } from "./ai-call.ts";
 import {
   buildCorsHeaders,
   handleCorsPreflight,
   parseAllowedOrigins,
 } from "../_shared/cors.ts";
-import { requireUser } from "../_shared/authz.ts";
-import {
-  parseAndValidateExternalUrl,
-  safeFetch,
-} from "../_shared/external-url-policy.ts";
-import { json, jsonError, readJson } from "../_shared/http.ts";
-import { createServiceClient } from "../_shared/supabase-clients.ts";
+import { readJson } from "../_shared/http.ts";
+import { preprocessEnvelope } from "./envelope.ts";
 
 // ─── TASK HANDLERS (monolith split, stage 4b) ───
 import { handleValidateKey } from "./handlers/validate-key.ts";
@@ -75,11 +30,6 @@ import { handleCreateTemplate } from "./handlers/create-template.ts";
 import { handleRefineTemplate } from "./handlers/refine-template.ts";
 import { handleGenerateExercises } from "./handlers/generate-exercises.ts";
 import { handleVerifyExercise } from "./handlers/verify-exercise.ts";
-import {
-  buildSectionIndex,
-  enforceNoDirectCode,
-  preprocessEnvelope,
-} from "./envelope.ts";
 
 const ALLOWED_ORIGINS = parseAllowedOrigins();
 
