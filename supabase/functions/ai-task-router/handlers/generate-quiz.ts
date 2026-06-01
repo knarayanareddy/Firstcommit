@@ -4,8 +4,16 @@
  */
 import type { TraceBuilder } from "../../_shared/telemetry.ts";
 import { enforceNoDirectCode } from "../envelope.ts";
-import { GROUNDING_RULES, SECURITY_RULES_BLOCK, callWithAgenticReview } from "../generation-core.ts";
-import { buildLearnerProfileBlock, buildPackBlock, buildSpansBlock } from "../prompts.ts";
+import {
+  callWithAgenticReview,
+  GROUNDING_RULES,
+  SECURITY_RULES_BLOCK,
+} from "../generation-core.ts";
+import {
+  buildLearnerProfileBlock,
+  buildPackBlock,
+  buildSpansBlock,
+} from "../prompts.ts";
 import { batchRerankWithLLM } from "../reranker.ts";
 import { errorResponse, jsonResponse, structuredError } from "../responses.ts";
 import { resolveSnippets } from "../utils/snippet-resolver.ts";
