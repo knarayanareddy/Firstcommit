@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # `npm ci` requires package.json and package-lock.json to be in sync and
+      # hard-fails otherwise (EUSAGE). Several repos in this estate have a stale
+      # lockfile -- Guardian was missing ws@8.22.0. `npm install` still catches
+      # real breakage at build/typecheck time without failing on lock drift.
+      - run: npm install
+      - run: npm run build
